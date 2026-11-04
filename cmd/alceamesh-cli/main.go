@@ -4,16 +4,15 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
+	"alceacore.ru/alceamesh/internal/client"
+	"alceacore.ru/alceamesh/internal/ipc"
 	"alceacore.ru/alceamesh/internal/wgconf"
-	"alceacore.ru/alceamesh/internal/wgengine"
 )
 
-const version = "0.0.1-m0"
+const version = "0.1.0-m1"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -35,12 +34,18 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		usage()
 		return nil
+	case "ping":
+		return cmdPing()
+	case "status":
+		return cmdStatus()
 	case "show":
 		return cmdShow(rest)
 	case "uapi":
 		return cmdUAPI(rest)
 	case "up":
 		return cmdUp(rest)
+	case "down":
+		return cmdDown(rest)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", command)
@@ -48,18 +53,111 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `alceamesh-cli - AlceaMesh WireGuard proof of concept
+	fmt.Fprint(os.Stderr, `alceamesh-cli - AlceaMesh command line client
 
 usage:
-  alceamesh-cli show  <config.conf>              parse and print a normalized config
-  alceamesh-cli uapi  <config.conf>              print the UAPI payload sent to the engine
-  alceamesh-cli up    [flags] <config.conf>      bring the tunnel up and stay in foreground
+  alceamesh-cli ping                          check the service
+  alceamesh-cli status                        show tunnels managed by the service
+  alceamesh-cli up   [--name NAME] <conf>     bring a tunnel up via the service
+  alceamesh-cli down <name>                   bring a tunnel down via the service
+  alceamesh-cli show <conf>                   parse and print a normalized config (offline)
+  alceamesh-cli uapi <conf>                   print the UAPI payload (offline)
   alceamesh-cli version
 
-flags for "up":
-  --name NAME     adapter name (default: derived from the config file name)
-  --verbose       enable verbose WireGuard logging
+Commands that talk to the service require it to be running (alceameshd run).
 `)
+}
+
+func cmdPing() error {
+	c, err := dial()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	v, err := c.Version()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("pong: version=%s pid=%d\n", v.Version, v.PID)
+	return nil
+}
+
+func cmdStatus() error {
+	c, err := dial()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	result, err := c.Status()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("service version: %s\n", result.Version)
+	if len(result.Tunnels) == 0 {
+		fmt.Println("no tunnels")
+		return nil
+	}
+	for _, tunnel := range result.Tunnels {
+		printTunnel(tunnel)
+	}
+	return nil
+}
+
+func cmdUp(args []string) error {
+	fs := flag.NewFlagSet("up", flag.ContinueOnError)
+	name := fs.String("name", "", "tunnel name (default: derived from the config file name)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: alceamesh-cli up [--name NAME] <config.conf>")
+	}
+	path := fs.Arg(0)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if _, err := wgconf.Parse(data); err != nil {
+		return fmt.Errorf("invalid config %s: %w", path, err)
+	}
+
+	tunnelName := *name
+	if tunnelName == "" {
+		tunnelName = tunnelNameFromPath(path)
+	}
+
+	c, err := dial()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	info, err := c.TunnelUp(ipc.TunnelUpParams{Name: tunnelName, ConfigText: string(data)})
+	if err != nil {
+		return err
+	}
+	printTunnel(*info)
+	return nil
+}
+
+func cmdDown(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: alceamesh-cli down <name>")
+	}
+	c, err := dial()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	if err := c.TunnelDown(args[0]); err != nil {
+		return err
+	}
+	fmt.Printf("tunnel %q is down\n", args[0])
+	return nil
 }
 
 func cmdShow(args []string) error {
@@ -90,48 +188,35 @@ func cmdUAPI(args []string) error {
 	return nil
 }
 
-func cmdUp(args []string) error {
-	fs := flag.NewFlagSet("up", flag.ContinueOnError)
-	name := fs.String("name", "", "adapter name (default: derived from the config file name)")
-	verbose := fs.Bool("verbose", false, "enable verbose WireGuard logging")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: alceamesh-cli up [--name NAME] [--verbose] <config.conf>")
-	}
-	path := fs.Arg(0)
-
-	cfg, err := wgconf.ParseFile(path)
+func dial() (*client.Client, error) {
+	c, err := client.Dial()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("cannot reach the AlceaMesh service: %w (is \"alceameshd run\" running?)", err)
 	}
-	if *name == "" {
-		*name = adapterName(path)
-	}
-	wgengine.SetVerbose(*verbose)
-
-	tunnel := wgengine.New(*name, cfg)
-	if err := tunnel.Up(); err != nil {
-		return err
-	}
-
-	fmt.Printf("tunnel %q is up\n", *name)
-	fmt.Printf("  addresses: %s\n", strings.Join(cfg.Interface.Address, ", "))
-	for i, peer := range cfg.Peers {
-		fmt.Printf("  peer %d: endpoint=%s allowed_ips=%s\n", i+1, peer.Endpoint, strings.Join(peer.AllowedIPs, ", "))
-	}
-	fmt.Println("press Ctrl+C to stop")
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	<-sig
-
-	fmt.Println("\nshutting down...")
-	return tunnel.Down()
+	return c, nil
 }
 
-func adapterName(path string) string {
+func printTunnel(tunnel ipc.TunnelInfo) {
+	state := "down"
+	if tunnel.Running {
+		state = "up"
+	}
+	fmt.Printf("tunnel %q [%s]\n", tunnel.Name, state)
+	if len(tunnel.Addresses) > 0 {
+		fmt.Printf("  addresses: %s\n", strings.Join(tunnel.Addresses, ", "))
+	}
+	if tunnel.MTU > 0 {
+		fmt.Printf("  mtu: %d\n", tunnel.MTU)
+	}
+	if len(tunnel.DNS) > 0 {
+		fmt.Printf("  dns: %s\n", strings.Join(tunnel.DNS, ", "))
+	}
+	for i, peer := range tunnel.Peers {
+		fmt.Printf("  peer %d: endpoint=%s allowed_ips=%s\n", i+1, peer.Endpoint, strings.Join(peer.AllowedIPs, ", "))
+	}
+}
+
+func tunnelNameFromPath(path string) string {
 	base := filepath.Base(path)
 	base = strings.TrimSuffix(base, filepath.Ext(base))
 	base = strings.Map(func(r rune) rune {

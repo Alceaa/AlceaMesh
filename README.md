@@ -7,7 +7,7 @@
 
 ---
 
-## Как это работает (M0)
+## Движок WireGuard
 
 Приложение **не вызывает** `wg.exe` и **не зависит** от официального клиента WireGuard.
 Движок `wireguard-go` встроен прямо в бинарник как библиотека:
@@ -38,6 +38,23 @@
 
 ---
 
+## Сервис и IPC
+
+- **`alceameshd`** — привилегированный процесс. Держит все туннели, слушает IPC-сокет.
+  - `alceameshd run` — запустить в foreground (для тестов, от админа);
+  - `alceameshd install` / `uninstall` — зарегистрировать/удалить как службу Windows.
+- **`alceamesh-cli`** — непривилегированный клиент: командует сервисом через IPC.
+- **IPC-протокол** — построчный JSON поверх unix-сокета:
+  `{"id":1,"method":"tunnel.up","params":{...}}` → `{"id":1,"result":{...}}`.
+
+Путь сокета: `%ProgramData%\AlceaMesh\alceamesh.sock` (Windows) / `/run/alceamesh` (Linux).
+При создании каталога сокета на Windows выставляется DACL, чтобы клиенты под обычным
+пользователем могли подключаться к сервису, запущенному как SYSTEM.
+
+Методы: `ping`, `version`, `status`, `tunnel.up`, `tunnel.down`.
+
+---
+
 ## Сборка
 
 ```powershell
@@ -47,44 +64,63 @@
 > Если PowerShell блокирует запуск скриптов (execution policy), выполните:
 > `powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1`
 
-Результат — `bin\alceamesh-cli.exe` и `bin\wintun.dll` рядом.
+Результат — три файла в `bin\`: `alceameshd.exe` (сервис), `alceamesh-cli.exe` (клиент)
+и `wintun.dll` (драйвер TUN; должен лежать рядом с сервисом).
 
 Либо вручную:
 
 ```powershell
+go build -o bin\alceameshd.exe    .\cmd\alceameshd
 go build -o bin\alceamesh-cli.exe .\cmd\alceamesh-cli
 Copy-Item third_party\wintun.dll bin\
 ```
 
 ---
 
-## Использование CLI
+## Использование
+
+Запустите сервис (в отдельном окне, **от имени администратора**):
 
 ```powershell
-# версия
-.\bin\alceamesh-cli.exe version
-
-# разобрать и показать нормализованный конфиг
-.\bin\alceamesh-cli.exe show examples\sample.conf
-
-# показать полезную нагрузку UAPI, которая уходит в движок
-.\bin\alceamesh-cli.exe uapi examples\sample.conf
-
-# поднять туннель (ТРЕБУЕТСЯ ЗАПУСК ОТ ИМЕНИ АДМИНИСТРАТОРА)
-.\bin\alceamesh-cli.exe up --verbose examples\sample.conf
+.\bin\alceameshd.exe run
 ```
 
-Команда `up` работает в foreground и держит туннель, пока не нажмёте `Ctrl+C`.
+В другом окне (обычные права) управляйте туннелями:
 
-> **Создание сетевого адаптера требует прав администратора.** Без них `wintun` вернёт
-> `Access is denied`. Запускайте терминал «от имени администратора».
+```powershell
+.\bin\alceamesh-cli.exe ping                       # проверить, что сервис отвечает
+.\bin\alceamesh-cli.exe status                     # список туннелей
+.\bin\alceamesh-cli.exe up examples\sample.conf    # поднять туннель
+.\bin\alceamesh-cli.exe down sample                # опустить туннель
+```
+
+Офлайн-команды (сервис не нужен):
+
+```powershell
+.\bin\alceamesh-cli.exe show examples\sample.conf  # разобрать и показать конфиг
+.\bin\alceamesh-cli.exe uapi examples\sample.conf  # UAPI-нагрузка для движка
+```
+
+Регистрация как службы Windows (от админа, автозапуск):
+
+```powershell
+.\bin\alceameshd.exe install
+Start-Service AlceaMesh
+```
+
+> **Создание сетевого адаптера требует прав администратора.** Именно поэтому движок живёт
+> в `alceameshd`, а CLI работает без админских прав.
 
 ---
 
 ## Структура репозитория
 
 ```
-cmd/alceamesh-cli/        CLI-утилита (точка входа для M0)
+cmd/alceameshd/           привилегированный сервис (движок + IPC)
+cmd/alceamesh-cli/        CLI-клиент сервиса
+internal/ipc/             IPC: JSON-протокол, сервер, клиент, путь сокета
+internal/daemon/          логика сервиса: управление туннелями
+internal/client/          типизированный клиент сервиса
 internal/wgconf/          парсер и сериализатор WireGuard .conf (+ тесты)
 internal/wgengine/        движок туннеля (wireguard-go + wintun + настройка Windows)
 third_party/wintun.dll    подписанный драйвер TUN (см. wintun-LICENSE.txt)
@@ -100,8 +136,11 @@ scripts/build.ps1         сборка
 go test ./...
 ```
 
-Покрыт парсер конфигов: разбор полного и минимального `.conf`, round-trip, генерация UAPI
-(включая перевод ключей base64 → hex), обработка ошибок.
+- `internal/wgconf` — парсер конфигов: полный/минимальный `.conf`, round-trip, UAPI
+  (base64 → hex), обработка ошибок.
+- `internal/wgengine` — построение маршрутов: next-hop по семейству адреса, маскирование,
+  дедупликация, определение default-route, `Table = off`.
+- `internal/ipc` — запрос/ответ, параметры, ошибка хендлера, неизвестный метод, серия вызовов.
 
 ---
 
