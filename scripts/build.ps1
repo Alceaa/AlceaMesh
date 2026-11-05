@@ -8,6 +8,7 @@ try {
 
     go build -o (Join-Path $out 'alceameshd.exe') '.\cmd\alceameshd'
     go build -o (Join-Path $out 'alceamesh-cli.exe') '.\cmd\alceamesh-cli'
+    go build -o (Join-Path $out 'alceacoord.exe') '.\cmd\alceacoord'
     Copy-Item (Join-Path $root 'third_party\wintun.dll') $out -Force
 
     Write-Host "built: $out"

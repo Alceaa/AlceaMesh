@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"alceacore.ru/alceamesh/internal/client"
+	"alceacore.ru/alceamesh/internal/coordclient"
 	"alceacore.ru/alceamesh/internal/ipc"
 	"alceacore.ru/alceamesh/internal/wgconf"
 )
 
-const version = "0.1.0-m1"
+const version = "0.2.0-m2"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -46,6 +49,8 @@ func run(args []string) error {
 		return cmdUp(rest)
 	case "down":
 		return cmdDown(rest)
+	case "coord":
+		return cmdCoord(rest)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", command)
@@ -62,9 +67,16 @@ usage:
   alceamesh-cli down <name>                   bring a tunnel down via the service
   alceamesh-cli show <conf>                   parse and print a normalized config (offline)
   alceamesh-cli uapi <conf>                   print the UAPI payload (offline)
+  alceamesh-cli coord <sub> [flags]           talk to the coordinator (control plane)
   alceamesh-cli version
 
+Coordinator subcommands: ping, version, devices, enroll, token, tokens, delete.
+  alceamesh-cli coord enroll --token T --name NAME [--platform P] [--public-key PK]
+  alceamesh-cli coord devices [--secret S | --admin-key K]
+  alceamesh-cli coord token   --admin-key K [--label L] [--mesh-ip IP] [--ttl-hours N]
+
 Commands that talk to the service require it to be running (alceameshd run).
+Coordinator commands need --server (env ALCEAMESH_COORDINATOR).
 `)
 }
 
@@ -231,4 +243,224 @@ func tunnelNameFromPath(path string) string {
 		return "AlceaMesh"
 	}
 	return base
+}
+
+type coordFlags struct {
+	server   string
+	secret   string
+	adminKey string
+}
+
+func newCoordFlagSet(name string) (*flag.FlagSet, *coordFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags := &coordFlags{}
+	fs.StringVar(&flags.server, "server", os.Getenv("ALCEAMESH_COORDINATOR"), "coordinator base URL (env ALCEAMESH_COORDINATOR)")
+	fs.StringVar(&flags.secret, "secret", os.Getenv("ALCEAMESH_DEVICE_SECRET"), "device secret (env ALCEAMESH_DEVICE_SECRET)")
+	fs.StringVar(&flags.adminKey, "admin-key", os.Getenv("ALCEAMESH_ADMIN_KEY"), "admin key (env ALCEAMESH_ADMIN_KEY)")
+	return fs, flags
+}
+
+func (f *coordFlags) client(auth string) (*coordclient.Client, error) {
+	if f.server == "" {
+		return nil, fmt.Errorf("coordinator URL is required (--server or ALCEAMESH_COORDINATOR)")
+	}
+	return coordclient.New(f.server, auth), nil
+}
+
+func cmdCoord(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: alceamesh-cli coord <ping|version|devices|enroll|token|tokens|delete> [flags]")
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "ping":
+		return cmdCoordPing(rest)
+	case "version":
+		return cmdCoordVersion(rest)
+	case "devices":
+		return cmdCoordDevices(rest)
+	case "enroll":
+		return cmdCoordEnroll(rest)
+	case "token":
+		return cmdCoordToken(rest)
+	case "tokens":
+		return cmdCoordTokens(rest)
+	case "delete":
+		return cmdCoordDelete(rest)
+	default:
+		return fmt.Errorf("unknown coord subcommand %q", sub)
+	}
+}
+
+func cmdCoordPing(args []string) error {
+	fs, flags := newCoordFlagSet("coord ping")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := flags.client(flags.secret)
+	if err != nil {
+		return err
+	}
+	if err := c.Ping(); err != nil {
+		return err
+	}
+	fmt.Println("coordinator: pong")
+	return nil
+}
+
+func cmdCoordVersion(args []string) error {
+	fs, flags := newCoordFlagSet("coord version")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := flags.client("")
+	if err != nil {
+		return err
+	}
+	value, err := c.Version()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("coordinator version: %s\n", value)
+	return nil
+}
+
+func cmdCoordDevices(args []string) error {
+	fs, flags := newCoordFlagSet("coord devices")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	auth := flags.secret
+	if auth == "" {
+		auth = flags.adminKey
+	}
+	c, err := flags.client(auth)
+	if err != nil {
+		return err
+	}
+	devices, err := c.Devices()
+	if err != nil {
+		return err
+	}
+	if len(devices) == 0 {
+		fmt.Println("no devices")
+		return nil
+	}
+	fmt.Printf("%-20s %-16s %-8s %s\n", "NAME", "MESH IP", "STATE", "PLATFORM")
+	for _, device := range devices {
+		state := "offline"
+		if device.Online {
+			state = "online"
+		}
+		fmt.Printf("%-20s %-16s %-8s %s\n", device.Name, device.MeshIP, state, device.Platform)
+	}
+	return nil
+}
+
+func cmdCoordEnroll(args []string) error {
+	fs, flags := newCoordFlagSet("coord enroll")
+	token := fs.String("token", "", "enrollment token (required)")
+	name := fs.String("name", "", "device name (required)")
+	platform := fs.String("platform", runtime.GOOS, "device platform")
+	publicKey := fs.String("public-key", "", "WireGuard public key")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *token == "" || *name == "" {
+		return fmt.Errorf("usage: alceamesh-cli coord enroll --token T --name NAME [--platform P] [--public-key PK]")
+	}
+	c, err := flags.client("")
+	if err != nil {
+		return err
+	}
+	result, err := c.Enroll(*token, *name, *publicKey, *platform)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("device %q enrolled\n", result.Device.Name)
+	fmt.Printf("  id:      %s\n", result.Device.ID)
+	fmt.Printf("  mesh ip: %s\n", result.Device.MeshIP)
+	fmt.Printf("  secret:  %s\n", result.Secret)
+	fmt.Println("store the secret: it is the device credential for heartbeats and the device list.")
+	return nil
+}
+
+func cmdCoordToken(args []string) error {
+	fs, flags := newCoordFlagSet("coord token")
+	label := fs.String("label", "", "token label")
+	meshIP := fs.String("mesh-ip", "", "pin the device to this mesh IP")
+	ttlHours := fs.Int("ttl-hours", 0, "token lifetime in hours (0 = never expires)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if flags.adminKey == "" {
+		return fmt.Errorf("admin key is required (--admin-key or ALCEAMESH_ADMIN_KEY)")
+	}
+	c, err := flags.client(flags.adminKey)
+	if err != nil {
+		return err
+	}
+	var ttl time.Duration
+	if *ttlHours > 0 {
+		ttl = time.Duration(*ttlHours) * time.Hour
+	}
+	token, err := c.CreateToken(*label, *meshIP, ttl)
+	if err != nil {
+		return err
+	}
+	fmt.Println(token.Value)
+	return nil
+}
+
+func cmdCoordTokens(args []string) error {
+	fs, flags := newCoordFlagSet("coord tokens")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if flags.adminKey == "" {
+		return fmt.Errorf("admin key is required (--admin-key or ALCEAMESH_ADMIN_KEY)")
+	}
+	c, err := flags.client(flags.adminKey)
+	if err != nil {
+		return err
+	}
+	tokens, err := c.Tokens()
+	if err != nil {
+		return err
+	}
+	if len(tokens) == 0 {
+		fmt.Println("no tokens")
+		return nil
+	}
+	for _, token := range tokens {
+		state := "unused"
+		if token.UsedBy != "" {
+			state = "used by " + token.UsedBy
+		}
+		fmt.Printf("%s  %-20s label=%q mesh_ip=%s\n", token.Value, state, token.Label, token.MeshIP)
+	}
+	return nil
+}
+
+func cmdCoordDelete(args []string) error {
+	fs, flags := newCoordFlagSet("coord delete")
+	id := fs.String("id", "", "device id (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if flags.adminKey == "" {
+		return fmt.Errorf("admin key is required (--admin-key or ALCEAMESH_ADMIN_KEY)")
+	}
+	if *id == "" {
+		return fmt.Errorf("usage: alceamesh-cli coord delete --id DEVICE_ID --admin-key K")
+	}
+	c, err := flags.client(flags.adminKey)
+	if err != nil {
+		return err
+	}
+	if err := c.DeleteDevice(*id); err != nil {
+		return err
+	}
+	fmt.Printf("device %q removed\n", *id)
+	return nil
 }
