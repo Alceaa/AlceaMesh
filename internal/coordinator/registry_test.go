@@ -229,3 +229,86 @@ func TestDeleteDevice(t *testing.T) {
 		t.Error("heartbeat should fail after the device is deleted")
 	}
 }
+
+func TestAnnounceUpsertsByPublicKey(t *testing.T) {
+	registry, clk := newTestRegistry(t)
+
+	first, err := registry.Announce(AnnounceRequest{
+		PublicKey: "puba", Name: "Alice", MeshIP: "10.0.0.5", Platform: "windows", Available: true,
+	})
+	if err != nil {
+		t.Fatalf("Announce: %v", err)
+	}
+	if first.MeshIP != "10.0.0.5" || !first.Available || first.ID == "" {
+		t.Fatalf("unexpected device: %+v", first)
+	}
+
+	clk.t = clk.t.Add(time.Minute)
+	second, err := registry.Announce(AnnounceRequest{
+		PublicKey: "puba", Name: "Alice 2", MeshIP: "10.0.0.5", Available: false,
+	})
+	if err != nil {
+		t.Fatalf("Announce 2: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Errorf("device id changed: %s != %s", second.ID, first.ID)
+	}
+	if second.Name != "Alice 2" || second.Available {
+		t.Errorf("announce did not update the device: %+v", second)
+	}
+
+	devices, _ := registry.Devices()
+	if len(devices) != 1 {
+		t.Errorf("expected 1 device, got %d", len(devices))
+	}
+}
+
+func TestAnnounceRequiresPublicKey(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+	if _, err := registry.Announce(AnnounceRequest{Name: "x"}); err == nil {
+		t.Fatal("expected an error for a missing public key")
+	}
+}
+
+func TestAnnounceKeepsMeshIP(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	first, err := registry.Announce(AnnounceRequest{PublicKey: "p1", Name: "A"})
+	if err != nil {
+		t.Fatalf("Announce: %v", err)
+	}
+	second, err := registry.Announce(AnnounceRequest{PublicKey: "p1", Name: "A"})
+	if err != nil {
+		t.Fatalf("Announce 2: %v", err)
+	}
+	if first.MeshIP != second.MeshIP {
+		t.Errorf("mesh ip changed: %s != %s", first.MeshIP, second.MeshIP)
+	}
+}
+
+func TestPeersFiltersByAvailability(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	if _, err := registry.Announce(AnnounceRequest{PublicKey: "p1", Name: "Ready", Available: true}); err != nil {
+		t.Fatalf("Announce p1: %v", err)
+	}
+	if _, err := registry.Announce(AnnounceRequest{PublicKey: "p2", Name: "Busy"}); err != nil {
+		t.Fatalf("Announce p2: %v", err)
+	}
+
+	all, err := registry.Peers(false)
+	if err != nil {
+		t.Fatalf("Peers(false): %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("Peers(false) = %d, want 2", len(all))
+	}
+
+	ready, err := registry.Peers(true)
+	if err != nil {
+		t.Fatalf("Peers(true): %v", err)
+	}
+	if len(ready) != 1 || ready[0].Name != "Ready" {
+		t.Errorf("Peers(true) = %+v, want Ready only", ready)
+	}
+}

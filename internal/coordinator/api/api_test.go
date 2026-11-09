@@ -184,3 +184,41 @@ func TestDeleteDevice(t *testing.T) {
 		t.Errorf("delete with admin = %d, want 200", resp.StatusCode)
 	}
 }
+
+func TestPresenceAndPeers(t *testing.T) {
+	server := newTestServer(t)
+
+	resp, data := doJSON(t, http.MethodPost, server.URL+"/v1/presence", "",
+		map[string]any{"public_key": "pub", "name": "Alice", "mesh_ip": "10.0.0.7", "available": true})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("presence status = %d body = %s", resp.StatusCode, data)
+	}
+
+	_, data = doJSON(t, http.MethodGet, server.URL+"/v1/peers?available=1", "", nil)
+	var peersOut struct {
+		Peers []coordinator.DeviceView `json:"peers"`
+	}
+	if err := json.Unmarshal(data, &peersOut); err != nil {
+		t.Fatalf("decode peers: %v", err)
+	}
+	if len(peersOut.Peers) != 1 || peersOut.Peers[0].Name != "Alice" || !peersOut.Peers[0].Available {
+		t.Fatalf("unexpected peers: %+v", peersOut.Peers)
+	}
+
+	resp, _ = doJSON(t, http.MethodPost, server.URL+"/v1/presence", "",
+		map[string]any{"public_key": "pub", "name": "Alice", "available": false})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second presence status = %d", resp.StatusCode)
+	}
+
+	_, data = doJSON(t, http.MethodGet, server.URL+"/v1/peers?available=1", "", nil)
+	peersOut.Peers = nil
+	json.Unmarshal(data, &peersOut)
+	if len(peersOut.Peers) != 0 {
+		t.Errorf("expected no available peers, got %+v", peersOut.Peers)
+	}
+
+	if resp, _ := doJSON(t, http.MethodPost, server.URL+"/v1/presence", "", map[string]any{"name": "x"}); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("presence without key = %d, want 400", resp.StatusCode)
+	}
+}

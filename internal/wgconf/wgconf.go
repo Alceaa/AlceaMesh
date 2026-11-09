@@ -1,10 +1,12 @@
 package wgconf
 
 import (
+	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -307,6 +309,33 @@ func (c *Config) ToUAPI() (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+func (c *Config) PublicKey() (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(c.Interface.PrivateKey)
+	if err != nil {
+		return "", fmt.Errorf("invalid base64 private key: %w", err)
+	}
+	if len(raw) != 32 {
+		return "", fmt.Errorf("private key must be 32 bytes, got %d", len(raw))
+	}
+	private, err := ecdh.X25519().NewPrivateKey(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid private key: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(private.PublicKey().Bytes()), nil
+}
+
+func (c *Config) PrimaryAddress() string {
+	for _, value := range c.Interface.Address {
+		if prefix, err := netip.ParsePrefix(value); err == nil {
+			return prefix.Addr().String()
+		}
+		if addr, err := netip.ParseAddr(value); err == nil {
+			return addr.String()
+		}
+	}
+	return ""
 }
 
 func keyToHex(key string) (string, error) {

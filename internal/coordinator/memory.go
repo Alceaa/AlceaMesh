@@ -43,6 +43,17 @@ func (s *MemoryStore) GetDeviceBySecret(secret string) (Device, bool, error) {
 	return Device{}, false, nil
 }
 
+func (s *MemoryStore) GetDeviceByPublicKey(publicKey string) (Device, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, device := range s.devices {
+		if publicKey != "" && device.PublicKey == publicKey {
+			return device, true, nil
+		}
+	}
+	return Device{}, false, nil
+}
+
 func (s *MemoryStore) ListDevices() ([]Device, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

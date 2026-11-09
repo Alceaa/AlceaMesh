@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -12,10 +11,11 @@ import (
 	"alceacore.ru/alceamesh/internal/client"
 	"alceacore.ru/alceamesh/internal/coordclient"
 	"alceacore.ru/alceamesh/internal/ipc"
+	"alceacore.ru/alceamesh/internal/naming"
 	"alceacore.ru/alceamesh/internal/wgconf"
 )
 
-const version = "0.2.0-m2"
+const version = "0.3.0-m3"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -138,7 +138,7 @@ func cmdUp(args []string) error {
 
 	tunnelName := *name
 	if tunnelName == "" {
-		tunnelName = tunnelNameFromPath(path)
+		tunnelName = naming.TunnelFromPath(path)
 	}
 
 	c, err := dial()
@@ -226,23 +226,6 @@ func printTunnel(tunnel ipc.TunnelInfo) {
 	for i, peer := range tunnel.Peers {
 		fmt.Printf("  peer %d: endpoint=%s allowed_ips=%s\n", i+1, peer.Endpoint, strings.Join(peer.AllowedIPs, ", "))
 	}
-}
-
-func tunnelNameFromPath(path string) string {
-	base := filepath.Base(path)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	base = strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			return r
-		default:
-			return '-'
-		}
-	}, base)
-	if base == "" {
-		return "AlceaMesh"
-	}
-	return base
 }
 
 type coordFlags struct {

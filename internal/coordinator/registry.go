@@ -171,6 +171,82 @@ func (r *Registry) Devices() ([]DeviceView, error) {
 	return views, nil
 }
 
+func (r *Registry) Announce(req AnnounceRequest) (*Device, error) {
+	publicKey := strings.TrimSpace(req.PublicKey)
+	if publicKey == "" {
+		return nil, fmt.Errorf("public key is required")
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "device"
+	}
+
+	now := r.now()
+	device, found, err := r.store.GetDeviceByPublicKey(publicKey)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		id, err := randomHex(8)
+		if err != nil {
+			return nil, err
+		}
+		secret, err := randomHex(32)
+		if err != nil {
+			return nil, err
+		}
+		device = Device{ID: id, Secret: secret, PublicKey: publicKey, EnrolledAt: now}
+	}
+
+	device.Name = name
+	device.Platform = strings.TrimSpace(req.Platform)
+	device.Available = req.Available
+	device.LastSeen = now
+
+	meshIP, err := r.resolveMeshIP(req.MeshIP, device.ID, device.MeshIP)
+	if err != nil {
+		return nil, err
+	}
+	device.MeshIP = meshIP
+
+	if err := r.store.PutDevice(device); err != nil {
+		return nil, err
+	}
+	return &device, nil
+}
+
+func (r *Registry) resolveMeshIP(requested, exceptID, current string) (string, error) {
+	if requested != "" {
+		used, err := r.ipInUse(requested, exceptID)
+		if err != nil {
+			return "", err
+		}
+		if !used {
+			return requested, nil
+		}
+	}
+	if current != "" {
+		return current, nil
+	}
+	return r.nextFreeIP()
+}
+
+func (r *Registry) Peers(availableOnly bool) ([]DeviceView, error) {
+	devices, err := r.store.ListDevices()
+	if err != nil {
+		return nil, err
+	}
+	now := r.now()
+	views := make([]DeviceView, 0, len(devices))
+	for _, device := range devices {
+		if availableOnly && !device.Available {
+			continue
+		}
+		views = append(views, DeviceView{Device: device, Online: r.online(device, now)})
+	}
+	return views, nil
+}
+
 func (r *Registry) DeleteDevice(id string) error {
 	return r.store.DeleteDevice(id)
 }
@@ -181,7 +257,7 @@ func (r *Registry) online(device Device, now time.Time) bool {
 
 func (r *Registry) assignMeshIP(requested string) (string, error) {
 	if requested != "" {
-		used, err := r.ipInUse(requested)
+		used, err := r.ipInUse(requested, "")
 		if err != nil {
 			return "", err
 		}
@@ -226,13 +302,13 @@ func (r *Registry) nextFreeIP() (string, error) {
 	return "", fmt.Errorf("no free addresses in pool %s", r.pool)
 }
 
-func (r *Registry) ipInUse(meshIP string) (bool, error) {
+func (r *Registry) ipInUse(meshIP, exceptID string) (bool, error) {
 	devices, err := r.store.ListDevices()
 	if err != nil {
 		return false, err
 	}
 	for _, device := range devices {
-		if device.MeshIP == meshIP {
+		if device.ID != exceptID && device.MeshIP == meshIP {
 			return true, nil
 		}
 	}

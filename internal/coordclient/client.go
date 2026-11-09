@@ -31,6 +31,38 @@ type EnrollResult struct {
 	Secret string             `json:"secret"`
 }
 
+type PresenceRequest struct {
+	PublicKey string `json:"public_key"`
+	Name      string `json:"name"`
+	MeshIP    string `json:"mesh_ip"`
+	Platform  string `json:"platform"`
+	Available bool   `json:"available"`
+}
+
+func (c *Client) Announce(req PresenceRequest) (*coordinator.Device, error) {
+	var out struct {
+		Device coordinator.Device `json:"device"`
+	}
+	if err := c.do(http.MethodPost, "/v1/presence", req, &out); err != nil {
+		return nil, err
+	}
+	return &out.Device, nil
+}
+
+func (c *Client) Peers(availableOnly bool) ([]coordinator.DeviceView, error) {
+	path := "/v1/peers"
+	if availableOnly {
+		path += "?available=1"
+	}
+	var out struct {
+		Peers []coordinator.DeviceView `json:"peers"`
+	}
+	if err := c.do(http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Peers, nil
+}
+
 func (c *Client) Ping() error {
 	return c.do(http.MethodGet, "/v1/ping", nil, nil)
 }

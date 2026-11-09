@@ -113,6 +113,13 @@ $env:ALCEAMESH_ADMIN_KEY = "<длинный случайный ключ>"
 | `POST` | `/v1/tokens` | админ-ключ | создать токен |
 | `GET`  | `/v1/tokens` | админ-ключ | список токенов |
 | `DELETE` | `/v1/devices/{id}` | админ-ключ | удалить устройство |
+| `POST` | `/v1/presence` | — | устройство представляется публичным ключом (обновляет реестр, ставит `available`) |
+| `GET`  | `/v1/peers` | — | участники сети; `?available=1` — только готовые принять файл |
+
+> `/v1/presence` и `/v1/peers` — self-service путь для клиентов: токены/handshake не нужны,
+> устройство идентифицируется публичным ключом WireGuard из своего `.conf`. Эти методы рассчитаны
+> на то, что координатор доступен **только по приватному мешу** (слушать его на mesh-интерфейсе).
+> Токены (`/v1/enroll`) остаются для админских сценариев и CLI.
 
 ### CLI
 
@@ -128,23 +135,60 @@ $t = .\bin\alceamesh-cli.exe coord token --admin-key <ключ> --label "тел�
 
 ## Сборка
 
+Все бинарники кладутся в `bin\` в корне репозитория.
+
+### Сервис, CLI и координатор
+
 ```powershell
 .\scripts\build.ps1
 ```
 
-> Если PowerShell блокирует запуск скриптов (execution policy), выполните:
+> Если PowerShell блокирует запуск скриптов (execution policy):
 > `powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1`
 
-Результат — четыре файла в `bin\`: `alceameshd.exe` (сервис), `alceamesh-cli.exe` (клиент),
-`alceacoord.exe` (координатор для VPS) и `wintun.dll` (драйвер TUN; должен лежать рядом с сервисом).
+Результат — три исполняемых файла и драйвер: `alceameshd.exe` (сервис), `alceamesh-cli.exe`
+(клиент), `alceacoord.exe` (координатор для VPS) и `wintun.dll` (драйвер TUN; должен лежать
+рядом с сервисом).
 
-Либо вручную:
+> Перед сборкой остановите запущенный `alceameshd` (службу — `Stop-Service AlceaMesh`): пока
+> процесс жив, Windows не даёт перезаписать `alceameshd.exe` и `wintun.dll`.
+
+### Десктопное приложение
+
+Нужны **Wails v3 CLI**, **Node.js** (npm) и WebView2 Runtime (в Windows 11 уже есть):
+
+```powershell
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
+.\scripts\build-ui.ps1
+```
+
+> Каталог `build/` (скаффолдинг Wails: Taskfiles, иконки, упаковка) **в репозиторий не входит** —
+> он только локальный. На чистом клоне восстановите его командой
+> `wails3 generate build-assets -name AlceaMesh -binaryname alceamesh`. Рядом нужен пустой
+> `build/go.mod` — он исключает мобильные заготовки Wails из `go build ./...`.
+
+> Та же оговорка про execution policy:
+> `powershell -ExecutionPolicy Bypass -File .\scripts\build-ui.ps1`
+
+Скрипт вызывает `wails3 build`: тот сам ставит зависимости фронтенда и вшивает `frontend/dist`
+в бинарник. Результат — `bin\alceamesh.exe`.
+
+### Вручную
 
 ```powershell
 go build -o bin\alceameshd.exe    .\cmd\alceameshd
 go build -o bin\alceamesh-cli.exe .\cmd\alceamesh-cli
 go build -o bin\alceacoord.exe    .\cmd\alceacoord
 Copy-Item third_party\wintun.dll bin\
+
+wails3 build                      # приложение, из корня репозитория
+```
+
+### Разработка
+
+```powershell
+wails3 dev                        # приложение, горячая пересборка фронтенда
+go test ./...                     # тесты
 ```
 
 ---
@@ -188,6 +232,10 @@ Start-Service AlceaMesh
 ## Структура репозитория
 
 ```
+main.go / tunnelservice.go / deviceservice.go   приложение (Wails v3): shell + Go-сервисы для bindings
+frontend/                 фронтенд (React + TS + Vite); bindings/ генерируются Wails
+build/                    скаффолдинг сборки Wails (Taskfiles, иконки, упаковка) — отдельный модуль
+Taskfile.yml              задачи Wails (wails3 build / wails3 dev)
 cmd/alceameshd/           привилегированный сервис (движок + IPC)
 cmd/alceamesh-cli/        CLI-клиент сервиса
 cmd/alceacoord/           координатор для VPS (control plane)
@@ -198,11 +246,14 @@ internal/coordinator/     ядро координатора: реестр, enrol
 internal/coordinator/api/ HTTP/JSON API координатора (+ тесты)
 internal/coordinator/sqlitestore/  хранилище координатора на SQLite (+ тесты)
 internal/coordclient/     HTTP-клиент координатора
+internal/settings/        локальные настройки клиента, JSON (+ тесты)
+internal/naming/          имя туннеля из имени файла (+ тесты)
 internal/wgconf/          парсер и сериализатор WireGuard .conf (+ тесты)
 internal/wgengine/        движок туннеля (wireguard-go + wintun + настройка Windows)
 third_party/wintun.dll    подписанный драйвер TUN (см. wintun-LICENSE.txt)
 examples/sample.conf      пример конфигурации
-scripts/build.ps1         сборка
+scripts/build.ps1         сборка сервиса, CLI и координатора
+scripts/build-ui.ps1      сборка приложения (wails3 build)
 ```
 
 ---
@@ -224,6 +275,8 @@ go test ./...
   проверка авторизации (401), удаление устройства.
 - `internal/coordinator/sqlitestore` — CRUD и персистентность SQLite, работа реестра с этим стором.
 - `internal/coordclient` — round-trip клиента координатора через реальный HTTP-сервер.
+- `internal/settings` — локальные настройки клиента: отсутствие файла, round-trip, перезапись.
+- `internal/naming` — имя туннеля из имени файла: разделители, посторонние символы, пустой ввод.
 
 ---
 

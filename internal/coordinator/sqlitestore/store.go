@@ -19,10 +19,12 @@ CREATE TABLE IF NOT EXISTS devices (
 	public_key  TEXT NOT NULL DEFAULT '',
 	mesh_ip     TEXT NOT NULL DEFAULT '',
 	platform    TEXT NOT NULL DEFAULT '',
+	available   INTEGER NOT NULL DEFAULT 0,
 	enrolled_at TEXT NOT NULL DEFAULT '',
 	last_seen   TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_secret ON devices(secret);
+CREATE INDEX IF NOT EXISTS idx_devices_public_key ON devices(public_key);
 
 CREATE TABLE IF NOT EXISTS tokens (
 	value      TEXT PRIMARY KEY,
@@ -49,6 +51,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	_, _ = db.Exec(`ALTER TABLE devices ADD COLUMN available INTEGER NOT NULL DEFAULT 0`)
 	return &Store{db: db}, nil
 }
 
@@ -58,19 +61,29 @@ func (s *Store) Close() error {
 
 func (s *Store) PutDevice(device coordinator.Device) error {
 	_, err := s.db.Exec(`
-		INSERT INTO devices (id, secret, name, public_key, mesh_ip, platform, enrolled_at, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO devices (id, secret, name, public_key, mesh_ip, platform, available, enrolled_at, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			secret      = excluded.secret,
 			name        = excluded.name,
 			public_key  = excluded.public_key,
 			mesh_ip     = excluded.mesh_ip,
 			platform    = excluded.platform,
+			available   = excluded.available,
 			enrolled_at = excluded.enrolled_at,
 			last_seen   = excluded.last_seen`,
 		device.ID, device.Secret, device.Name, device.PublicKey,
-		device.MeshIP, device.Platform, formatTime(device.EnrolledAt), formatTime(device.LastSeen))
+		device.MeshIP, device.Platform, boolToInt(device.Available),
+		formatTime(device.EnrolledAt), formatTime(device.LastSeen))
 	return err
+}
+
+func (s *Store) GetDeviceByPublicKey(publicKey string) (coordinator.Device, bool, error) {
+	if publicKey == "" {
+		return coordinator.Device{}, false, nil
+	}
+	row := s.db.QueryRow(selectDevice+` WHERE public_key = ?`, publicKey)
+	return scanDevice(row)
 }
 
 func (s *Store) GetDevice(id string) (coordinator.Device, bool, error) {
@@ -152,7 +165,7 @@ func (s *Store) ListTokens() ([]coordinator.Token, error) {
 }
 
 const (
-	selectDevice = `SELECT id, secret, name, public_key, mesh_ip, platform, enrolled_at, last_seen FROM devices`
+	selectDevice = `SELECT id, secret, name, public_key, mesh_ip, platform, available, enrolled_at, last_seen FROM devices`
 	selectToken  = `SELECT value, label, mesh_ip, created_at, expires_at, used_by FROM tokens`
 )
 
@@ -163,20 +176,29 @@ type scanner interface {
 func scanDevice(sc scanner) (coordinator.Device, bool, error) {
 	var (
 		device     coordinator.Device
+		available  int
 		enrolledAt string
 		lastSeen   string
 	)
 	err := sc.Scan(&device.ID, &device.Secret, &device.Name, &device.PublicKey,
-		&device.MeshIP, &device.Platform, &enrolledAt, &lastSeen)
+		&device.MeshIP, &device.Platform, &available, &enrolledAt, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return coordinator.Device{}, false, nil
 	}
 	if err != nil {
 		return coordinator.Device{}, false, err
 	}
+	device.Available = available != 0
 	device.EnrolledAt = parseTime(enrolledAt)
 	device.LastSeen = parseTime(lastSeen)
 	return device, true, nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func scanToken(sc scanner) (coordinator.Token, bool, error) {

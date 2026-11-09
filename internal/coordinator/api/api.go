@@ -30,6 +30,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/devices/{id}", s.handleDeleteDevice)
 	mux.HandleFunc("POST /v1/tokens", s.handleCreateToken)
 	mux.HandleFunc("GET /v1/tokens", s.handleListTokens)
+	mux.HandleFunc("POST /v1/presence", s.handlePresence)
+	mux.HandleFunc("GET /v1/peers", s.handlePeers)
 	return mux
 }
 
@@ -147,6 +149,44 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens})
+}
+
+type presenceRequest struct {
+	PublicKey string `json:"public_key"`
+	Name      string `json:"name"`
+	MeshIP    string `json:"mesh_ip"`
+	Platform  string `json:"platform"`
+	Available bool   `json:"available"`
+}
+
+func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
+	var req presenceRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	device, err := s.Registry.Announce(coordinator.AnnounceRequest{
+		PublicKey: req.PublicKey,
+		Name:      req.Name,
+		MeshIP:    req.MeshIP,
+		Platform:  req.Platform,
+		Available: req.Available,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"device": device})
+}
+
+func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
+	availableOnly := r.URL.Query().Get("available") == "1"
+	peers, err := s.Registry.Peers(availableOnly)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peers": peers})
 }
 
 func (s *Server) authorized(r *http.Request) bool {

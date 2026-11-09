@@ -9,6 +9,7 @@ type Device struct {
 	PublicKey  string    `json:"public_key,omitempty"`
 	MeshIP     string    `json:"mesh_ip,omitempty"`
 	Platform   string    `json:"platform,omitempty"`
+	Available  bool      `json:"available"`
 	EnrolledAt time.Time `json:"enrolled_at"`
 	LastSeen   time.Time `json:"last_seen"`
 }
@@ -16,6 +17,14 @@ type Device struct {
 type DeviceView struct {
 	Device
 	Online bool `json:"online"`
+}
+
+type AnnounceRequest struct {
+	PublicKey string
+	Name      string
+	MeshIP    string
+	Platform  string
+	Available bool
 }
 
 type Token struct {
