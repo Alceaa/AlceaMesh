@@ -17,6 +17,10 @@ export function Disconnect(peerKey: string): $CancellablePromise<void> {
     return $Call.ByID(306184763, peerKey);
 }
 
+export function SendFile(peerKey: string): $CancellablePromise<$models.TransferProgress> {
+    return $Call.ByID(3629444689, peerKey);
+}
+
 export function Shutdown(): $CancellablePromise<void> {
     return $Call.ByID(675586203);
 }

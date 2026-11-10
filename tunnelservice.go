@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"os"
 	"strings"
 
@@ -63,7 +63,7 @@ func (s *TunnelService) Status() (ConnectionStatus, error) {
 
 	conn, err := client.Dial()
 	if err != nil {
-		status.Message = "Служба AlceaMesh не запущена"
+		status.Message = serviceUnavailable
 		return status, nil
 	}
 	defer conn.Close()
@@ -71,7 +71,7 @@ func (s *TunnelService) Status() (ConnectionStatus, error) {
 
 	result, err := conn.Status()
 	if err != nil {
-		status.Message = err.Error()
+		status.Message = friendlyText(err, fallbackService)
 		return status, nil
 	}
 	for _, tunnel := range result.Tunnels {
@@ -85,14 +85,14 @@ func (s *TunnelService) Status() (ConnectionStatus, error) {
 func (s *TunnelService) Connect() error {
 	stored, err := settings.Load()
 	if err != nil {
-		return err
+		return friendlyError(err, fallbackSettings)
 	}
 	if strings.TrimSpace(stored.ConfigText) == "" {
-		return fmt.Errorf("Сначала импортируйте конфигурацию WireGuard")
+		return errors.New("Сначала импортируйте конфигурацию.")
 	}
 	config, err := wgconf.Parse([]byte(stored.ConfigText))
 	if err != nil {
-		return fmt.Errorf("Сохранённая конфигурация повреждена: %w", err)
+		return errors.New("Сохранённая конфигурация повреждена. Импортируйте её заново.")
 	}
 
 	conn, err := dialDaemon()
@@ -102,13 +102,13 @@ func (s *TunnelService) Connect() error {
 	defer conn.Close()
 
 	_, err = conn.TunnelUp(ipc.TunnelUpParams{Name: displayName(stored), ConfigText: string(config.Marshal())})
-	return err
+	return friendlyError(err, fallbackService)
 }
 
 func (s *TunnelService) Disconnect() error {
 	stored, err := settings.Load()
 	if err != nil {
-		return err
+		return friendlyError(err, fallbackSettings)
 	}
 	conn, err := dialDaemon()
 	if err != nil {
@@ -119,11 +119,11 @@ func (s *TunnelService) Disconnect() error {
 	name := displayName(stored)
 	result, err := conn.Status()
 	if err != nil {
-		return err
+		return friendlyError(err, fallbackService)
 	}
 	for _, tunnel := range result.Tunnels {
 		if tunnel.Name == name && tunnel.Running {
-			return conn.TunnelDown(name)
+			return friendlyError(conn.TunnelDown(name), fallbackService)
 		}
 	}
 	return nil
@@ -131,7 +131,7 @@ func (s *TunnelService) Disconnect() error {
 
 func (s *TunnelService) Import() (ConfigSummary, error) {
 	if appInstance == nil {
-		return ConfigSummary{}, fmt.Errorf("Окно недоступно")
+		return ConfigSummary{}, errors.New(fallbackWindow)
 	}
 	path, err := appInstance.Dialog.OpenFile().
 		SetTitle("Import WireGuard configuration").
@@ -139,7 +139,7 @@ func (s *TunnelService) Import() (ConfigSummary, error) {
 		AddFilter("All files", "*").
 		PromptForSingleSelection()
 	if err != nil {
-		return ConfigSummary{}, err
+		return ConfigSummary{}, friendlyError(err, fallbackDialog)
 	}
 	if path == "" {
 		return ConfigSummary{}, nil
@@ -147,7 +147,7 @@ func (s *TunnelService) Import() (ConfigSummary, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ConfigSummary{}, err
+		return ConfigSummary{}, friendlyError(err, fallbackFile)
 	}
 	return saveConfig(naming.TunnelFromPath(path), data)
 }
@@ -155,17 +155,17 @@ func (s *TunnelService) Import() (ConfigSummary, error) {
 func (s *TunnelService) Forget() error {
 	stored, err := settings.Load()
 	if err != nil {
-		return err
+		return friendlyError(err, fallbackSettings)
 	}
 	stored.TunnelName = ""
 	stored.ConfigText = ""
-	return stored.Save()
+	return friendlyError(stored.Save(), fallbackSettings)
 }
 
 func (s *TunnelService) Config() (string, error) {
 	stored, err := settings.Load()
 	if err != nil {
-		return "", err
+		return "", friendlyError(err, fallbackSettings)
 	}
 	return strings.TrimSpace(stored.ConfigText), nil
 }
@@ -173,12 +173,12 @@ func (s *TunnelService) Config() (string, error) {
 func saveConfig(name string, data []byte) (ConfigSummary, error) {
 	config, err := wgconf.Parse(data)
 	if err != nil {
-		return ConfigSummary{}, fmt.Errorf("Некорректная конфигурация: %w", err)
+		return ConfigSummary{}, errors.New("Не удалось прочитать файл конфигурации. Проверьте, что выбран правильный файл .conf.")
 	}
 
 	stored, err := settings.Load()
 	if err != nil {
-		return ConfigSummary{}, err
+		return ConfigSummary{}, friendlyError(err, fallbackSettings)
 	}
 	stored.TunnelName = name
 	stored.ConfigText = string(config.Marshal())
@@ -188,7 +188,7 @@ func saveConfig(name string, data []byte) (ConfigSummary, error) {
 		}
 	}
 	if err := stored.Save(); err != nil {
-		return ConfigSummary{}, err
+		return ConfigSummary{}, friendlyError(err, fallbackSettings)
 	}
 	return summarize(name, config), nil
 }
@@ -217,7 +217,7 @@ func displayName(stored *settings.Settings) string {
 func dialDaemon() (*client.Client, error) {
 	conn, err := client.Dial()
 	if err != nil {
-		return nil, fmt.Errorf("Служба AlceaMesh не запущена — запустите alceameshd: %w", err)
+		return nil, errors.New(serviceUnavailable)
 	}
 	return conn, nil
 }

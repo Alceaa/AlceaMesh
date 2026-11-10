@@ -39,6 +39,26 @@ func (a *Agent) dispatch(data []byte, from *net.UDPAddr) {
 
 	if id, ok := stunResponseID(data); ok {
 		a.deliverStunResponse(id, data)
+		return
+	}
+
+	a.routeData(data, from)
+}
+
+func (a *Agent) routeData(data []byte, from *net.UDPAddr) {
+	addr, err := netip.ParseAddrPort(from.String())
+	if err != nil {
+		return
+	}
+	for _, s := range a.snapshot() {
+		conn := s.dataConn()
+		if conn == nil || conn.remote != addr {
+			continue
+		}
+		payload := make([]byte, len(data))
+		copy(payload, data)
+		conn.push(datagram{data: payload, from: addr})
+		return
 	}
 }
 

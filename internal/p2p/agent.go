@@ -159,8 +159,26 @@ func (a *Agent) Connect(peer Peer) error {
 
 func (a *Agent) Disconnect(peerKey string) {
 	if s := a.remove(peerKey); s != nil {
+		if conn := s.dataConn(); conn != nil {
+			_ = conn.Close()
+		}
 		a.sendTo(encodePacket(packet{kind: packetBye, token: s.token}), s.candidates())
 	}
+}
+
+func (a *Agent) DataConn(peerKey string) (net.PacketConn, error) {
+	s := a.session(peerKey)
+	if s == nil {
+		return nil, fmt.Errorf("p2p: no session with %q", peerKey)
+	}
+	remote := s.directAddr()
+	if !remote.IsValid() {
+		return nil, errors.New("p2p: the direct path is not established yet")
+	}
+
+	conn := newDataConn(a, peerKey, remote, 128)
+	s.attachData(conn)
+	return conn, nil
 }
 
 func (a *Agent) Statuses() []Status {
@@ -197,6 +215,33 @@ func (a *Agent) remove(peerKey string) *session {
 	}
 	delete(a.sessions, peerKey)
 	return s
+}
+
+func (a *Agent) session(peerKey string) *session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sessions[peerKey]
+}
+
+func (a *Agent) sendRaw(payload []byte, to netip.AddrPort) error {
+	a.mu.Lock()
+	conn := a.conn
+	a.mu.Unlock()
+
+	if conn == nil {
+		return errors.New("p2p: agent is not running")
+	}
+	_, err := conn.WriteToUDP(payload, net.UDPAddrFromAddrPort(to))
+	return err
+}
+
+func (a *Agent) localAddr() net.Addr {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.conn == nil {
+		return &net.UDPAddr{}
+	}
+	return a.conn.LocalAddr()
 }
 
 func (a *Agent) isClosed() bool {

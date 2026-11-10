@@ -55,6 +55,8 @@ type session struct {
 	sentAt   time.Time
 	rtt      time.Duration
 	lastPing time.Time
+	peerAddr netip.AddrPort
+	data     *dataConn
 
 	startedAt time.Time
 }
@@ -146,6 +148,7 @@ func (s *session) handle(data []byte, from netip.AddrPort) []byte {
 	case packetPunch:
 		s.sawPunch = true
 		s.lastSeen = time.Now()
+		s.peerAddr = from
 		if !s.sentAt.IsZero() {
 			s.rtt = time.Since(s.sentAt)
 		}
@@ -155,6 +158,7 @@ func (s *session) handle(data []byte, from netip.AddrPort) []byte {
 	case packetAck:
 		s.sawAck = true
 		s.lastSeen = time.Now()
+		s.peerAddr = from
 		if !s.sentAt.IsZero() {
 			s.rtt = time.Since(s.sentAt)
 		}
@@ -204,8 +208,8 @@ func (s *session) status() Status {
 	defer s.mu.Unlock()
 
 	endpoint := ""
-	if s.state == StateDirect && len(s.remote) > 0 {
-		endpoint = s.remote[0].String()
+	if s.state == StateDirect && s.peerAddr.IsValid() {
+		endpoint = s.peerAddr.String()
 	}
 	return Status{
 		Peer:     s.peer.PublicKey,
@@ -216,4 +220,25 @@ func (s *session) status() Status {
 		RTTms:    int(s.rtt.Milliseconds()),
 		Message:  s.message,
 	}
+}
+
+func (s *session) directAddr() netip.AddrPort {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateDirect || !s.peerAddr.IsValid() {
+		return netip.AddrPort{}
+	}
+	return s.peerAddr
+}
+
+func (s *session) attachData(conn *dataConn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = conn
+}
+
+func (s *session) dataConn() *dataConn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data
 }

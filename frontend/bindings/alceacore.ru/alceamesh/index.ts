@@ -19,5 +19,6 @@ export type {
     Identity,
     NetworkTransport,
     NetworkView,
-    PeerStatus
+    PeerStatus,
+    TransferProgress
 } from "./models.js";

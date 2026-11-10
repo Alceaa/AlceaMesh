@@ -55,7 +55,7 @@ func (s *DeviceService) Network() (NetworkView, error) {
 
 	view := NetworkView{Coordinator: coordinatorURL(), Identity: identityOf(stored)}
 	if view.Identity.PublicKey == "" {
-		view.Message = "Импортируйте конфигурацию, чтобы войти в сеть"
+		view.Message = "Импортируйте конфигурацию, чтобы войти в сеть."
 		return view, nil
 	}
 
@@ -68,14 +68,14 @@ func (s *DeviceService) Network() (NetworkView, error) {
 		Available: stored.AcceptFiles,
 	})
 	if err != nil {
-		view.Message = err.Error()
+		view.Message = friendlyText(err, fallbackNetwork)
 		return view, nil
 	}
 	view.Reachable = true
 
 	peers, err := client.Peers(false)
 	if err != nil {
-		view.Message = err.Error()
+		view.Message = friendlyText(err, fallbackNetwork)
 		return view, nil
 	}
 	for _, peer := range peers {
@@ -92,19 +92,19 @@ func (s *DeviceService) Network() (NetworkView, error) {
 func (s *DeviceService) SetAccept(accept bool) error {
 	stored, err := settings.Load()
 	if err != nil {
-		return err
+		return friendlyError(err, fallbackSettings)
 	}
 	stored.AcceptFiles = accept
-	return stored.Save()
+	return friendlyError(stored.Save(), fallbackSettings)
 }
 
 func (s *DeviceService) SetName(name string) error {
 	stored, err := settings.Load()
 	if err != nil {
-		return err
+		return friendlyError(err, fallbackSettings)
 	}
 	stored.DeviceName = strings.TrimSpace(name)
-	return stored.Save()
+	return friendlyError(stored.Save(), fallbackSettings)
 }
 
 func identityOf(stored *settings.Settings) Identity {

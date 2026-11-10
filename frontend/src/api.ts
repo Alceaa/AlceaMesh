@@ -6,6 +6,7 @@ import type {
   NetworkTransport,
   NetworkView,
   PeerStatus,
+  TransferProgress,
 } from "../bindings/alceacore.ru/alceamesh";
 
 export type {
@@ -15,12 +16,13 @@ export type {
   NetworkTransport,
   NetworkView,
   PeerStatus,
+  TransferProgress,
 };
 
 export function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
-  return "unexpected error";
+  return "Неизвестная ошибка";
 }
 
 export const mesh = {
@@ -42,4 +44,5 @@ export const mesh = {
   connectPeer: (peerKey: string, name: string, meshIP: string): Promise<void> =>
     PeerService.Connect(peerKey, name, meshIP),
   disconnectPeer: (peerKey: string): Promise<void> => PeerService.Disconnect(peerKey),
+  sendFile: (peerKey: string): Promise<TransferProgress> => PeerService.SendFile(peerKey),
 };

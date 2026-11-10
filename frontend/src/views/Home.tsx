@@ -97,7 +97,7 @@ export default function HomeView({
           </Card>
         ) : (
           <Card>
-            <div className="empty">Импортируйте конфигурацию WireGuard, чтобы войти в сеть Alcea.</div>
+            <div className="empty">Импортируйте конфигурацию, чтобы войти в сеть Alcea.</div>
             <div className="card-foot">
               <button className="btn btn-primary" onClick={onGoSettings}>
                 Импортировать конфигурацию
@@ -108,7 +108,8 @@ export default function HomeView({
 
         {status && !status.serviceUp && (
           <div className="error">
-            Служба AlceaMesh не запущена. Запустите <code>alceameshd</code>, чтобы управлять туннелем.
+            VPN недоступен: служба AlceaMesh не отвечает. Перезапустите приложение или запустите службу
+            «AlceaMesh» от имени администратора.
           </div>
         )}
       </section>

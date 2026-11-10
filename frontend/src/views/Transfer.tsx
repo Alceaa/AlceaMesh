@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { mesh, messageOf } from "../api";
-import type { DeviceView, NetworkTransport, NetworkView } from "../api";
+import type { DeviceView, NetworkTransport, NetworkView, TransferProgress } from "../api";
 import { Card } from "../components";
 import type { Notify } from "../components";
 import { SendIcon } from "../icons";
@@ -18,10 +18,31 @@ const STATE_LABEL: Record<string, string> = {
   relay: "Через сервер",
 };
 
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value} Б`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} КБ`;
+  }
+  if (value < 1024 * 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} МБ`;
+  }
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} ГБ`;
+}
+
+function percentOf(progress: TransferProgress): number {
+  if (progress.total <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round((progress.sent / progress.total) * 100)));
+}
+
 export default function TransferView({ network, transport, onRefresh, onNotify }: Props) {
   const [pending, setPending] = useState("");
 
   const others = (network?.devices ?? []).filter((device) => !device.self);
+  const transfers = transport?.transfers ?? [];
 
   const statusOf = (peerKey: string) => (transport?.peers ?? []).find((item) => item.peer === peerKey);
 
@@ -29,7 +50,7 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
     setPending(device.publicKey);
     try {
       await mesh.connectPeer(device.publicKey, device.name, device.meshIP);
-      onNotify("ok", "Прямое соединение", `Пробиваем NAT до «${device.name}»`);
+      onNotify("ok", "Прямое соединение", `Устанавливаем прямое соединение с «${device.name}»`);
       await onRefresh(true);
     } catch (error) {
       onNotify("error", "Прямое соединение", messageOf(error));
@@ -47,6 +68,26 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
     }
   };
 
+  const send = async (device: DeviceView) => {
+    setPending(device.publicKey);
+    try {
+      const result = await mesh.sendFile(device.publicKey);
+      if (!result.name) {
+        return;
+      }
+      if (result.error) {
+        onNotify("error", "Передача", result.error);
+      } else {
+        onNotify("ok", "Передача", `«${result.name}» отправлен`);
+      }
+      await onRefresh(true);
+    } catch (error) {
+      onNotify("error", "Передача", messageOf(error));
+    } finally {
+      setPending("");
+    }
+  };
+
   return (
     <>
       <section className="section">
@@ -55,8 +96,8 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
         </div>
         <Card>
           <div className="empty">
-            Выберите устройство и установите прямое соединение. Сама передача файлов появится на
-            следующем этапе.
+            Установите прямое соединение и нажмите «Отправить». Принятые файлы складываются в папку
+            {transport?.inbox ? ` ${transport.inbox}` : " загрузок"}.
           </div>
         </Card>
       </section>
@@ -95,8 +136,21 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
                       <div className="device-name">{device.name}</div>
                       <div className="device-sub">{details.join(" · ")}</div>
                     </div>
-                    <span className="status">
-                      {state === "idle" ? (
+                    <span className="device-actions">
+                      {state === "direct" ? (
+                        <>
+                          <button
+                            className="btn chip btn-primary"
+                            disabled={pending === device.publicKey}
+                            onClick={() => void send(device)}
+                          >
+                            Отправить
+                          </button>
+                          <button className="badge is-on" onClick={() => void disconnect(device)}>
+                            Прямое
+                          </button>
+                        </>
+                      ) : state === "idle" ? (
                         <button
                           className="btn chip"
                           disabled={pending === device.publicKey || !device.publicKey}
@@ -105,10 +159,7 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
                           Соединить
                         </button>
                       ) : (
-                        <button
-                          className={state === "direct" ? "badge is-on" : "badge"}
-                          onClick={() => void disconnect(device)}
-                        >
+                        <button className="badge" onClick={() => void disconnect(device)}>
                           {STATE_LABEL[state] ?? state}
                         </button>
                       )}
@@ -123,6 +174,48 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
         </Card>
         {transport?.message ? <div className="hint">{transport.message}</div> : null}
       </section>
+
+      {transfers.length > 0 ? (
+        <section className="section">
+          <div className="section-head">
+            <h2>Передачи</h2>
+          </div>
+          <Card>
+            <div className="devices">
+              {transfers.map((progress) => (
+                <div
+                  className="transfer"
+                  key={`${progress.peer}-${progress.direction}-${progress.name}`}
+                >
+                  <div className="transfer-head">
+                    <span className="transfer-name">{progress.name || "файл"}</span>
+                    <span className="hint">
+                      {progress.direction === "send" ? "отправка" : "приём"}
+                      {progress.resumed ? " · докачка" : ""}
+                    </span>
+                    <span className="spacer" />
+                    <span className="hint mono">
+                      {formatBytes(progress.sent)} / {formatBytes(progress.total)}
+                    </span>
+                  </div>
+                  <div className="progress">
+                    <div
+                      className="progress-bar"
+                      data-done={progress.done && !progress.error ? "1" : "0"}
+                      style={{ width: `${percentOf(progress)}%` }}
+                    />
+                  </div>
+                  {progress.error ? (
+                    <div className="hint transfer-error">{progress.error}</div>
+                  ) : progress.done ? (
+                    <div className="hint">готово</div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </Card>
+        </section>
+      ) : null}
     </>
   );
 }

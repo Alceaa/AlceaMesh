@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 
 	"alceacore.ru/alceamesh/internal/coordclient"
@@ -16,10 +15,16 @@ type PeerService struct {
 	mu       sync.Mutex
 	agent    *p2p.Agent
 	agentKey string
+
+	transfers map[string]*peerTransfer
+	states    map[string]TransferProgress
 }
 
 func NewPeerService() *PeerService {
-	return &PeerService{}
+	return &PeerService{
+		transfers: make(map[string]*peerTransfer),
+		states:    make(map[string]TransferProgress),
+	}
 }
 
 type PeerStatus struct {
@@ -33,19 +38,24 @@ type PeerStatus struct {
 }
 
 type NetworkTransport struct {
-	PublicEndpoint string       `json:"publicEndpoint"`
-	Direct         bool         `json:"direct"`
-	Message        string       `json:"message"`
-	Peers          []PeerStatus `json:"peers"`
+	PublicEndpoint string             `json:"publicEndpoint"`
+	Direct         bool               `json:"direct"`
+	Inbox          string             `json:"inbox"`
+	Message        string             `json:"message"`
+	Peers          []PeerStatus       `json:"peers"`
+	Transfers      []TransferProgress `json:"transfers"`
 }
 
 func (s *PeerService) Transport() NetworkTransport {
 	agent, err := s.agentFor()
 	if err != nil {
-		return NetworkTransport{Message: err.Error()}
+		return NetworkTransport{Message: friendlyText(err, fallbackPeer)}
 	}
 
-	transport := NetworkTransport{}
+	transport := NetworkTransport{
+		Inbox:     s.inboxDir(),
+		Transfers: s.transferStates(),
+	}
 	if public := agent.PublicAddr(); public.IsValid() {
 		transport.PublicEndpoint = public.String()
 	}
@@ -61,6 +71,7 @@ func (s *PeerService) Transport() NetworkTransport {
 		})
 		if status.State == p2p.StateDirect {
 			transport.Direct = true
+			s.ensureTransfer(status.Peer, status.Name)
 		}
 	}
 	return transport
@@ -68,13 +79,13 @@ func (s *PeerService) Transport() NetworkTransport {
 
 func (s *PeerService) Connect(peerKey, name, meshIP string) error {
 	if peerKey == "" {
-		return errors.New("Публичный ключ устройства не определён")
+		return errors.New("Не удалось определить устройство. Обновите список устройств.")
 	}
 	agent, err := s.agentFor()
 	if err != nil {
 		return err
 	}
-	return agent.Connect(p2p.Peer{PublicKey: peerKey, Name: name, MeshIP: meshIP})
+	return friendlyError(agent.Connect(p2p.Peer{PublicKey: peerKey, Name: name, MeshIP: meshIP}), fallbackPeer)
 }
 
 func (s *PeerService) Disconnect(peerKey string) error {
@@ -90,6 +101,8 @@ func (s *PeerService) Disconnect(peerKey string) error {
 }
 
 func (s *PeerService) Shutdown() {
+	s.stopTransfers()
+
 	s.mu.Lock()
 	agent := s.agent
 	s.agent = nil
@@ -109,7 +122,7 @@ func (s *PeerService) agentFor() (*p2p.Agent, error) {
 
 	identity := identityOf(stored)
 	if identity.PublicKey == "" {
-		return nil, errors.New("Импортируйте конфигурацию, чтобы включить прямые соединения")
+		return nil, errors.New("Импортируйте конфигурацию, чтобы включить прямые соединения.")
 	}
 
 	s.mu.Lock()
@@ -131,7 +144,7 @@ func (s *PeerService) agentFor() (*p2p.Agent, error) {
 		Signaler:  signalAdapter{client: client, me: identity.PublicKey},
 	})
 	if err := agent.Start(); err != nil {
-		return nil, fmt.Errorf("Не удалось открыть P2P-сокет: %w", err)
+		return nil, friendlyError(err, fallbackPeer)
 	}
 
 	s.agent = agent

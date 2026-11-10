@@ -43,8 +43,10 @@ export interface Identity {
 export interface NetworkTransport {
     "publicEndpoint": string;
     "direct": boolean;
+    "inbox": string;
     "message": string;
     "peers": PeerStatus[] | null;
+    "transfers": TransferProgress[] | null;
 }
 
 export interface NetworkView {
@@ -63,4 +65,16 @@ export interface PeerStatus {
     "endpoint": string;
     "rttMs": number;
     "message": string;
+}
+
+export interface TransferProgress {
+    "direction": string;
+    "peer": string;
+    "name": string;
+    "path": string;
+    "sent": number;
+    "total": number;
+    "resumed": boolean;
+    "done": boolean;
+    "error": string;
 }
