@@ -44,5 +44,7 @@ export const mesh = {
   connectPeer: (peerKey: string, name: string, meshIP: string): Promise<void> =>
     PeerService.Connect(peerKey, name, meshIP),
   disconnectPeer: (peerKey: string): Promise<void> => PeerService.Disconnect(peerKey),
-  sendFile: (peerKey: string): Promise<TransferProgress> => PeerService.SendFile(peerKey),
+  sendFiles: (peerKey: string): Promise<TransferProgress> => PeerService.SendFiles(peerKey),
+  sendFolder: (peerKey: string): Promise<TransferProgress> => PeerService.SendFolder(peerKey),
+  clearFinished: (): Promise<void> => PeerService.ClearFinished(),
 };

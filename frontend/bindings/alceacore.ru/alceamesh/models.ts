@@ -68,12 +68,18 @@ export interface PeerStatus {
 }
 
 export interface TransferProgress {
+    "key": string;
     "direction": string;
     "peer": string;
+    "peerName": string;
     "name": string;
+    "relative": string;
     "path": string;
     "sent": number;
     "total": number;
+    "files": number;
+    "index": number;
+    "queued": boolean;
     "resumed": boolean;
     "done": boolean;
     "error": string;

@@ -76,6 +76,10 @@ func (a *Agent) Start() error {
 	}
 	a.conn = conn
 
+	if err := tuneSocket(conn); err != nil {
+		log.Printf("p2p: socket tuning failed: %v", err)
+	}
+
 	a.wg.Add(1)
 	go a.readLoop()
 

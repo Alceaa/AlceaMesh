@@ -18,12 +18,15 @@ type PeerService struct {
 
 	transfers map[string]*peerTransfer
 	states    map[string]TransferProgress
+	order     []string
+	seq       int
 }
 
 func NewPeerService() *PeerService {
 	return &PeerService{
 		transfers: make(map[string]*peerTransfer),
 		states:    make(map[string]TransferProgress),
+		order:     make([]string, 0, 8),
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 	"alceacore.ru/alceamesh/internal/coordinator/sqlitestore"
 )
 
-const version = "0.5.0-m5"
+const version = "0.6.0-m6"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

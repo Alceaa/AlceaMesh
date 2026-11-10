@@ -23,6 +23,7 @@ func TestFriendlyText(t *testing.T) {
 		{"transfer checksum", errors.New("transfer: checksum mismatch (got aa, want bb)"), fallbackTransfer, "Файл принят с ошибкой. Отправьте его ещё раз."},
 		{"transfer beats network rule", errors.New("transfer: send data: write udp 10.0.0.2:51001: wsasend: connection reset"), fallbackTransfer, "Связь с устройством прервалась. Повторите передачу."},
 		{"transfer name", errors.New("transfer: file name must not contain a path"), fallbackTransfer, "Устройство отправило файл с недопустимым именем."},
+		{"empty folder", errors.New("transfer: nothing to send"), fallbackTransfer, "В выбранной папке нет файлов для отправки."},
 		{"network unreachable", errors.New(`Get "http://vps.alceacore.ru:7788/v1/presence": dial tcp 10.0.0.1:7788: connectex: A connection attempt failed`), fallbackNetwork, "Сервер Alcea недоступен. Проверьте подключение к интернету."},
 		{"network dns", errors.New(`Get "http://vps.alceacore.ru:7788/v1/peers": dial tcp: lookup vps.alceacore.ru: no such host`), fallbackNetwork, "Сервер Alcea недоступен. Проверьте подключение к интернету."},
 		{"coordinator status", errors.New("coordinator returned 500 Internal Server Error"), fallbackNetwork, "Сервер Alcea отклонил запрос. Попробуйте позже."},

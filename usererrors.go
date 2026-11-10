@@ -48,6 +48,7 @@ var userMessages = []userMessage{
 	{"transfer: decode confirmation", "Устройство ответило непонятно. Повторите передачу."},
 	{"transfer: decode header", "Устройство отправило повреждённые данные."},
 	{"transfer: connect to peer", "Не удалось связаться с устройством. Проверьте, что оно в сети."},
+	{"transfer: nothing to send", "В выбранной папке нет файлов для отправки."},
 	{"transfer: file name must not contain a path", "Устройство отправило файл с недопустимым именем."},
 	{"transfer: invalid file name", "Устройство отправило файл с недопустимым именем."},
 	{"transfer: negative file size", "Устройство отправило файл неверного размера."},

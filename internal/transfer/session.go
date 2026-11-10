@@ -36,7 +36,14 @@ func (s *Session) Close() error {
 
 func quicConfig() *quic.Config {
 	return &quic.Config{
-		HandshakeIdleTimeout: 10 * time.Second,
-		MaxIdleTimeout:       60 * time.Second,
+		HandshakeIdleTimeout:           10 * time.Second,
+		MaxIdleTimeout:                 60 * time.Second,
+		KeepAlivePeriod:                20 * time.Second,
+		InitialStreamReceiveWindow:     4 << 20,
+		MaxStreamReceiveWindow:         16 << 20,
+		InitialConnectionReceiveWindow: 8 << 20,
+		MaxConnectionReceiveWindow:     64 << 20,
+		MaxIncomingStreams:             16,
+		DisablePathMTUDiscovery:        false,
 	}
 }

@@ -268,6 +268,7 @@ button.badge:hover { background-color: var(--bg-surface-hover); }
 .transfer-head { display: flex; align-items: center; gap: 8px; }
 .transfer-name { font-weight: 600; }
 .transfer-error { color: var(--danger); }
+.transfer-path { word-break: break-all; }
 .progress { height: 6px; border-radius: 999px; background-color: var(--bg-inset); overflow: hidden; }
 .progress-bar { height: 100%; width: 0; background-color: var(--accent); transition: width 0.2s ease; }
 .progress-bar[data-done="1"] { background-color: var(--success); }

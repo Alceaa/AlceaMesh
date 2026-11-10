@@ -226,3 +226,96 @@ func TestSharedSecretIsSymmetric(t *testing.T) {
 		t.Error("expected an error for invalid keys")
 	}
 }
+
+func TestSendAndReceiveFolder(t *testing.T) {
+	secret := randomSecret(t)
+	cert, err := Certificate(secret)
+	if err != nil {
+		t.Fatalf("certificate: %v", err)
+	}
+
+	sender, receiver, _, receiverAddr := loopbackPair(t)
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "Docs")
+	nested := filepath.Join(source, "sub", "deep")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	top := writeFile(t, filepath.Join(source, "a.txt"), 4096)
+	writeFile(t, filepath.Join(source, "sub", "b.bin"), 256*1024)
+	deep := writeFile(t, filepath.Join(nested, "c.txt"), 1024)
+
+	inbox := filepath.Join(dir, "inbox")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	type outcome struct {
+		progress Progress
+		err      error
+	}
+	received := make(chan outcome, 1)
+	go func() {
+		progress, err := Receive(ctx, receiver, cert, inbox, nil)
+		received <- outcome{progress, err}
+	}()
+
+	progress, sendErr := Send(ctx, sender, cert, receiverAddr, source, nil)
+	result := <-received
+	if sendErr != nil {
+		t.Fatalf("Send: %v (receiver said: %v)", sendErr, result.err)
+	}
+	if result.err != nil {
+		t.Fatalf("Receive: %v", result.err)
+	}
+	if progress.Name != "Docs" {
+		t.Errorf("batch name = %q, want %q", progress.Name, "Docs")
+	}
+	if progress.Files != 3 {
+		t.Errorf("files = %d, want 3", progress.Files)
+	}
+	if progress.Sent != progress.Total {
+		t.Errorf("sent = %d, total = %d, want equal", progress.Sent, progress.Total)
+	}
+	if result.progress.Files != 3 {
+		t.Errorf("received files = %d, want 3", result.progress.Files)
+	}
+	if result.progress.Name != "Docs" {
+		t.Errorf("received batch name = %q, want %q", result.progress.Name, "Docs")
+	}
+	if result.progress.Sent != progress.Total {
+		t.Errorf("received sent = %d, want %d", result.progress.Sent, progress.Total)
+	}
+
+	for path, want := range map[string][]byte{
+		filepath.Join(inbox, "Docs", "a.txt"):                top,
+		filepath.Join(inbox, "Docs", "sub", "deep", "c.txt"): deep,
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if sha256.Sum256(got) != sha256.Sum256(want) {
+			t.Errorf("received %s differs from the source", path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(inbox, "Docs", "sub", "b.bin")); err != nil {
+		t.Errorf("nested file is missing: %v", err)
+	}
+}
+
+func TestCheckRel(t *testing.T) {
+	valid := []string{"a.txt", "Docs/a.txt", "Docs/sub/deep/c.txt", "проект/файл.txt"}
+	for _, rel := range valid {
+		if err := checkRel(rel); err != nil {
+			t.Errorf("checkRel(%q) = %v, want nil", rel, err)
+		}
+	}
+
+	invalid := []string{"", ".", "..", "/abs.txt", "../evil.txt", "Docs/../../evil.txt", "a//b", `C:\Windows\x.txt`, "a/b\\c", "Docs/"}
+	for _, rel := range invalid {
+		if err := checkRel(rel); err == nil {
+			t.Errorf("checkRel(%q) = nil, want an error", rel)
+		}
+	}
+}

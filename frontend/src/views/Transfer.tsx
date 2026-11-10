@@ -68,23 +68,32 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
     }
   };
 
-  const send = async (device: DeviceView) => {
+  const send = async (device: DeviceView, folder: boolean) => {
     setPending(device.publicKey);
     try {
-      const result = await mesh.sendFile(device.publicKey);
+      const result = folder
+        ? await mesh.sendFolder(device.publicKey)
+        : await mesh.sendFiles(device.publicKey);
       if (!result.name) {
         return;
       }
-      if (result.error) {
-        onNotify("error", "Передача", result.error);
-      } else {
-        onNotify("ok", "Передача", `«${result.name}» отправлен`);
-      }
+      const label =
+        result.files > 1 ? `Добавлено в очередь: ${result.files}` : `«${result.name}» — в очереди`;
+      onNotify("ok", "Передача", label);
       await onRefresh(true);
     } catch (error) {
       onNotify("error", "Передача", messageOf(error));
     } finally {
       setPending("");
+    }
+  };
+
+  const clearFinished = async () => {
+    try {
+      await mesh.clearFinished();
+      await onRefresh(true);
+    } catch (error) {
+      onNotify("error", "Передача", messageOf(error));
     }
   };
 
@@ -96,7 +105,7 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
         </div>
         <Card>
           <div className="empty">
-            Установите прямое соединение и нажмите «Отправить». Принятые файлы складываются в папку
+            Установите прямое соединение и нажмите «Отправить» или «Папка». Принятые файлы складываются в папку
             {transport?.inbox ? ` ${transport.inbox}` : " загрузок"}.
           </div>
         </Card>
@@ -142,9 +151,16 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
                           <button
                             className="btn chip btn-primary"
                             disabled={pending === device.publicKey}
-                            onClick={() => void send(device)}
+                            onClick={() => void send(device, false)}
                           >
                             Отправить
+                          </button>
+                          <button
+                            className="btn chip"
+                            disabled={pending === device.publicKey}
+                            onClick={() => void send(device, true)}
+                          >
+                            Папка
                           </button>
                           <button className="badge is-on" onClick={() => void disconnect(device)}>
                             Прямое
@@ -179,18 +195,23 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
         <section className="section">
           <div className="section-head">
             <h2>Передачи</h2>
+            <span className="spacer" />
+            {transfers.some((item) => item.done || item.error) ? (
+              <button className="btn chip" onClick={() => void clearFinished()}>
+                Очистить
+              </button>
+            ) : null}
           </div>
           <Card>
             <div className="devices">
               {transfers.map((progress) => (
-                <div
-                  className="transfer"
-                  key={`${progress.peer}-${progress.direction}-${progress.name}`}
-                >
+                <div className="transfer" key={progress.key}>
                   <div className="transfer-head">
                     <span className="transfer-name">{progress.name || "файл"}</span>
                     <span className="hint">
+                      {progress.peerName ? `${progress.peerName} · ` : ""}
                       {progress.direction === "send" ? "отправка" : "приём"}
+                      {progress.files > 1 ? ` · файл ${progress.index} из ${progress.files}` : ""}
                       {progress.resumed ? " · докачка" : ""}
                     </span>
                     <span className="spacer" />
@@ -198,6 +219,9 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
                       {formatBytes(progress.sent)} / {formatBytes(progress.total)}
                     </span>
                   </div>
+                  {progress.files > 1 && progress.relative ? (
+                    <div className="hint mono transfer-path">{progress.relative}</div>
+                  ) : null}
                   <div className="progress">
                     <div
                       className="progress-bar"
@@ -205,7 +229,9 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
                       style={{ width: `${percentOf(progress)}%` }}
                     />
                   </div>
-                  {progress.error ? (
+                  {progress.queued ? (
+                    <div className="hint">в очереди</div>
+                  ) : progress.error ? (
                     <div className="hint transfer-error">{progress.error}</div>
                   ) : progress.done ? (
                     <div className="hint">готово</div>
