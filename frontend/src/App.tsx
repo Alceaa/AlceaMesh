@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mesh, messageOf } from "./api";
-import type { ConnectionStatus, NetworkView } from "./api";
+import type { ConnectionStatus, NetworkTransport, NetworkView } from "./api";
 import { Pill } from "./components";
 import { GearIcon, LogoIcon, MonitorIcon, SendIcon } from "./icons";
 import HomeView from "./views/Home";
@@ -14,6 +14,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("vpn");
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [network, setNetwork] = useState<NetworkView | null>(null);
+  const [transport, setTransport] = useState<NetworkTransport | null>(null);
   const [busy, setBusy] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastID = useRef(0);
@@ -28,9 +29,14 @@ export default function App() {
     async (quiet = false) => {
       if (!quiet) setBusy(true);
       try {
-        const [connection, peers] = await Promise.all([mesh.status(), mesh.network()]);
+        const [connection, peers, link] = await Promise.all([
+          mesh.status(),
+          mesh.network(),
+          mesh.transport(),
+        ]);
         setStatus(connection);
         setNetwork(peers);
+        setTransport(link);
       } catch (error) {
         if (!quiet) notify("error", "Ошибка", messageOf(error));
       } finally {
@@ -66,13 +72,16 @@ export default function App() {
           <HomeView
             status={status}
             network={network}
+            transport={transport}
             busy={busy}
             onRefresh={refresh}
             onNotify={notify}
             onGoSettings={() => setTab("settings")}
           />
         )}
-        {tab === "transfer" && <TransferView network={network} />}
+        {tab === "transfer" && (
+          <TransferView network={network} transport={transport} onRefresh={refresh} onNotify={notify} />
+        )}
         {tab === "settings" && (
           <SettingsView status={status} network={network} onRefresh={refresh} onNotify={notify} />
         )}

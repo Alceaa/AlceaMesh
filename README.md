@@ -115,6 +115,8 @@ $env:ALCEAMESH_ADMIN_KEY = "<длинный случайный ключ>"
 | `DELETE` | `/v1/devices/{id}` | админ-ключ | удалить устройство |
 | `POST` | `/v1/presence` | — | устройство представляется публичным ключом (обновляет реестр, ставит `available`) |
 | `GET`  | `/v1/peers` | — | участники сети; `?available=1` — только готовые принять файл |
+| `POST` | `/v1/signal` | — | signaling для P2P: обмен кандидатами (`from`, `to`, `kind`, `token`, `candidates`) |
+| `GET`  | `/v1/signal` | — | забрать адресованные мне сигналы (`?peer=<ключ>`), mailbox очищается |
 
 > `/v1/presence` и `/v1/peers` — self-service путь для клиентов: токены/handshake не нужны,
 > устройство идентифицируется публичным ключом WireGuard из своего `.conf`. Эти методы рассчитаны
@@ -130,6 +132,33 @@ $env:ALCEAMESH_COORDINATOR = "http://vps.alceacore.ru:7788"
 $t = .\bin\alceamesh-cli.exe coord token --admin-key <ключ> --label "телефон"
 .\bin\alceamesh-cli.exe coord enroll --token $t --name "Телефон" --platform android
 ```
+
+---
+
+## Прямой P2P (Direct/Relay)
+
+Задача — передавать файлы **напрямую** между устройствами, не гоняя трафик через VPS. Координатор
+используется только как «телефонная книжка» для обмена адресами.
+
+1. Каждое приложение открывает **один UDP-сокет** и узнаёт свой публичный адрес (`ip:port`) через
+   **STUN** (по умолчанию `stun.l.google.com:19302`).
+2. Инициатор отправляет «offer» с кандидатами через координатор (`POST /v1/signal`), собеседник
+   отвечает «answer» со своим адресом.
+3. Обе стороны одновременно шлют друг другу короткие UDP-пакеты (**hole punching**) — это пробивает
+   NAT. Как только пакеты проходят в обе стороны, канал считается **прямым**.
+4. Если за 8 секунд прямой путь не поднялся — **откат на WG-хаб** (трафик идёт через VPS). Индикатор
+   в приложении показывает **Прямое** или **Через сервер**.
+
+Детали:
+
+- **STUN написан свой** (RFC 5389: binding request + `XOR-MAPPED-ADDRESS`): запрос обязан уходить
+  **с того же сокета**, которым потом идёт пробивка, иначе NAT выдаст другой маппинг и пробивка не
+  сработает.
+- Протокол пробивки свой: `ALCP` + вид пакета + 16-байтовый токен сессии, который инициатор
+  передаёт через координатор. Пакеты чужой сессии игнорируются.
+- Keepalive каждые 15 с удерживает маппинг NAT; если прямой канал молчит дольше 45 с — сессия
+  возвращается в relay.
+- Полоса VPS тратится **только** в fallback: приоритет всегда у прямого пути.
 
 ---
 
@@ -232,7 +261,7 @@ Start-Service AlceaMesh
 ## Структура репозитория
 
 ```
-main.go / tunnelservice.go / deviceservice.go   приложение (Wails v3): shell + Go-сервисы для bindings
+main.go / tunnelservice.go / deviceservice.go / peerservice.go   приложение (Wails v3): shell + Go-сервисы для bindings
 frontend/                 фронтенд (React + TS + Vite); bindings/ генерируются Wails
 build/                    скаффолдинг сборки Wails (Taskfiles, иконки, упаковка) — отдельный модуль
 Taskfile.yml              задачи Wails (wails3 build / wails3 dev)
@@ -248,6 +277,7 @@ internal/coordinator/sqlitestore/  хранилище координатора �
 internal/coordclient/     HTTP-клиент координатора
 internal/settings/        локальные настройки клиента, JSON (+ тесты)
 internal/naming/          имя туннеля из имени файла (+ тесты)
+internal/p2p/             прямой P2P: STUN, hole punching, сессии (+ тесты)
 internal/wgconf/          парсер и сериализатор WireGuard .conf (+ тесты)
 internal/wgengine/        движок туннеля (wireguard-go + wintun + настройка Windows)
 third_party/wintun.dll    подписанный драйвер TUN (см. wintun-LICENSE.txt)
@@ -277,6 +307,9 @@ go test ./...
 - `internal/coordclient` — round-trip клиента координатора через реальный HTTP-сервер.
 - `internal/settings` — локальные настройки клиента: отсутствие файла, round-trip, перезапись.
 - `internal/naming` — имя туннеля из имени файла: разделители, посторонние символы, пустой ввод.
+- `internal/p2p` — STUN-обнаружение (кодек `XOR-MAPPED-ADDRESS`, реальный обмен с локальным
+  STUN-сервером) и **настоящая пробивка**: два агента на loopback поднимают прямой канал
+  (offer → signaling → punch → direct), плюс откат в relay, валидация сигналов и TTL mailbox.
 
 ---
 

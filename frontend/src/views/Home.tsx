@@ -1,24 +1,35 @@
 import { useState } from "react";
 import { mesh, messageOf } from "../api";
-import type { ConnectionStatus, NetworkView } from "../api";
+import type { ConnectionStatus, NetworkTransport, NetworkView } from "../api";
 import { Card, Switch } from "../components";
 import type { Notify } from "../components";
 
 type Props = {
   status: ConnectionStatus | null;
   network: NetworkView | null;
+  transport: NetworkTransport | null;
   busy: boolean;
   onRefresh: (quiet?: boolean) => Promise<void> | void;
   onNotify: Notify;
   onGoSettings: () => void;
 };
 
-export default function HomeView({ status, network, busy, onRefresh, onNotify, onGoSettings }: Props) {
+export default function HomeView({
+  status,
+  network,
+  transport,
+  busy,
+  onRefresh,
+  onNotify,
+  onGoSettings,
+}: Props) {
   const [pending, setPending] = useState(false);
 
   const configured = status?.configured ?? false;
   const running = status?.running ?? false;
   const accept = network?.identity.accept ?? false;
+  const direct = transport?.direct ?? false;
+  const connectionLabel = !running ? "—" : direct ? "Прямое" : "Через сервер";
 
   const toggleConnection = async () => {
     setPending(true);
@@ -71,7 +82,7 @@ export default function HomeView({ status, network, busy, onRefresh, onNotify, o
               </div>
               <div className="row">
                 <span className="label">Соединение</span>
-                <span className="value">{running ? "Прямое" : "—"}</span>
+                <span className="value">{connectionLabel}</span>
               </div>
             </div>
             <div className="card-foot">

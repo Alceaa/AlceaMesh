@@ -312,3 +312,78 @@ func TestPeersFiltersByAvailability(t *testing.T) {
 		t.Errorf("Peers(true) = %+v, want Ready only", ready)
 	}
 }
+
+func TestSignalMailboxDeliversAndDrains(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	offer := Signal{
+		From:       "alice",
+		To:         "bob",
+		Kind:       "offer",
+		Token:      "aa",
+		Candidates: []string{"1.2.3.4:1", "1.2.3.4:1", "", "5.6.7.8:2"},
+	}
+	if err := registry.PostSignal(offer); err != nil {
+		t.Fatalf("PostSignal: %v", err)
+	}
+	if err := registry.PostSignal(Signal{From: "carol", To: "bob", Kind: "answer"}); err != nil {
+		t.Fatalf("PostSignal: %v", err)
+	}
+
+	signals := registry.TakeSignals("bob")
+	if len(signals) != 2 {
+		t.Fatalf("signals = %d, want 2", len(signals))
+	}
+	if len(signals[0].Candidates) != 2 {
+		t.Errorf("candidates were not deduplicated: %v", signals[0].Candidates)
+	}
+	if signals[0].At.IsZero() {
+		t.Error("signal timestamp was not set")
+	}
+	if len(registry.TakeSignals("bob")) != 0 {
+		t.Error("the mailbox should be drained after a take")
+	}
+}
+
+func TestSignalsExpire(t *testing.T) {
+	registry, clk := newTestRegistry(t)
+
+	if err := registry.PostSignal(Signal{From: "alice", To: "bob", Kind: "offer"}); err != nil {
+		t.Fatalf("PostSignal: %v", err)
+	}
+	clk.t = clk.t.Add(SignalTTL + time.Second)
+
+	if got := registry.TakeSignals("bob"); len(got) != 0 {
+		t.Errorf("expired signals were returned: %+v", got)
+	}
+}
+
+func TestPostSignalValidatesInput(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	cases := []Signal{
+		{To: "bob", Kind: "offer"},
+		{From: "alice", Kind: "offer"},
+		{From: "alice", To: "alice", Kind: "offer"},
+		{From: "alice", To: "bob"},
+	}
+	for _, signal := range cases {
+		if err := registry.PostSignal(signal); err == nil {
+			t.Errorf("expected an error for %+v", signal)
+		}
+	}
+}
+
+func TestSignalsAreScopedToRecipient(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	if err := registry.PostSignal(Signal{From: "alice", To: "bob", Kind: "offer"}); err != nil {
+		t.Fatalf("PostSignal: %v", err)
+	}
+	if got := registry.TakeSignals("carol"); len(got) != 0 {
+		t.Errorf("carol received signals addressed to bob: %+v", got)
+	}
+	if got := registry.TakeSignals("bob"); len(got) != 1 {
+		t.Errorf("bob signals = %d, want 1", len(got))
+	}
+}

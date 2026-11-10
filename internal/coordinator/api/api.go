@@ -32,6 +32,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tokens", s.handleListTokens)
 	mux.HandleFunc("POST /v1/presence", s.handlePresence)
 	mux.HandleFunc("GET /v1/peers", s.handlePeers)
+	mux.HandleFunc("POST /v1/signal", s.handlePostSignal)
+	mux.HandleFunc("GET /v1/signal", s.handleTakeSignals)
 	return mux
 }
 
@@ -187,6 +189,28 @@ func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"peers": peers})
+}
+
+func (s *Server) handlePostSignal(w http.ResponseWriter, r *http.Request) {
+	var signal coordinator.Signal
+	if err := decodeJSON(r, &signal); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.Registry.PostSignal(signal); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleTakeSignals(w http.ResponseWriter, r *http.Request) {
+	peer := r.URL.Query().Get("peer")
+	if peer == "" {
+		writeError(w, http.StatusBadRequest, errors.New("peer is required"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"signals": s.Registry.TakeSignals(peer)})
 }
 
 func (s *Server) authorized(r *http.Request) bool {

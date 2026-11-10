@@ -3,10 +3,12 @@
 
 import * as DeviceService from "./deviceservice.js";
 import * as MetaService from "./metaservice.js";
+import * as PeerService from "./peerservice.js";
 import * as TunnelService from "./tunnelservice.js";
 export {
     DeviceService,
     MetaService,
+    PeerService,
     TunnelService
 };
 
@@ -15,5 +17,7 @@ export type {
     ConnectionStatus,
     DeviceView,
     Identity,
-    NetworkView
+    NetworkTransport,
+    NetworkView,
+    PeerStatus
 } from "./models.js";

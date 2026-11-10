@@ -26,6 +26,7 @@ export interface DeviceView {
     "name": string;
     "meshIP": string;
     "platform": string;
+    "publicKey": string;
     "online": boolean;
     "available": boolean;
     "self": boolean;
@@ -39,10 +40,27 @@ export interface Identity {
     "accept": boolean;
 }
 
+export interface NetworkTransport {
+    "publicEndpoint": string;
+    "direct": boolean;
+    "message": string;
+    "peers": PeerStatus[] | null;
+}
+
 export interface NetworkView {
     "coordinator": string;
     "reachable": boolean;
     "message": string;
     "identity": Identity;
     "devices": DeviceView[] | null;
+}
+
+export interface PeerStatus {
+    "peer": string;
+    "name": string;
+    "meshIP": string;
+    "state": string;
+    "endpoint": string;
+    "rttMs": number;
+    "message": string;
 }

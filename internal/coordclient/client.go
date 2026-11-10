@@ -2,10 +2,12 @@ package coordclient
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -132,6 +134,20 @@ func (c *Client) Tokens() ([]coordinator.Token, error) {
 
 func (c *Client) DeleteDevice(id string) error {
 	return c.do(http.MethodDelete, "/v1/devices/"+id, nil, nil)
+}
+
+func (c *Client) PostSignal(_ context.Context, signal coordinator.Signal) error {
+	return c.do(http.MethodPost, "/v1/signal", signal, nil)
+}
+
+func (c *Client) Signals(_ context.Context, peer string) ([]coordinator.Signal, error) {
+	var out struct {
+		Signals []coordinator.Signal `json:"signals"`
+	}
+	if err := c.do(http.MethodGet, "/v1/signal?peer="+url.QueryEscape(peer), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Signals, nil
 }
 
 func (c *Client) do(method, path string, body, out any) error {

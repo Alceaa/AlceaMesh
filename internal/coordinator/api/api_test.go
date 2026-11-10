@@ -222,3 +222,39 @@ func TestPresenceAndPeers(t *testing.T) {
 		t.Errorf("presence without key = %d, want 400", resp.StatusCode)
 	}
 }
+
+func TestSignalExchange(t *testing.T) {
+	server := newTestServer(t)
+
+	resp, data := doJSON(t, http.MethodPost, server.URL+"/v1/signal", "", map[string]any{
+		"from":       "alice",
+		"to":         "bob",
+		"kind":       "offer",
+		"token":      "aa",
+		"candidates": []string{"203.0.113.5:51820"},
+	})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("post signal status = %d body = %s", resp.StatusCode, data)
+	}
+
+	resp, data = doJSON(t, http.MethodGet, server.URL+"/v1/signal?peer=bob", "", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("take signal status = %d", resp.StatusCode)
+	}
+	var out struct {
+		Signals []coordinator.Signal `json:"signals"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("decode signals: %v", err)
+	}
+	if len(out.Signals) != 1 || out.Signals[0].From != "alice" {
+		t.Fatalf("unexpected signals: %+v", out.Signals)
+	}
+
+	if resp, _ := doJSON(t, http.MethodGet, server.URL+"/v1/signal", "", nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("signal without peer = %d, want 400", resp.StatusCode)
+	}
+	if resp, _ := doJSON(t, http.MethodPost, server.URL+"/v1/signal", "", map[string]any{"from": "alice"}); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("invalid signal = %d, want 400", resp.StatusCode)
+	}
+}

@@ -10,18 +10,24 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const appVersion = "0.3.0-m3"
+const appVersion = "0.4.0-m4"
 
 var appInstance *application.App
 
 func main() {
+	peerService := NewPeerService()
+
 	appInstance = application.New(application.Options{
 		Name:        "AlceaMesh",
 		Description: "P2P file transfer and WireGuard tunnels",
 		Services: []application.Service{
 			application.NewService(NewTunnelService()),
 			application.NewService(NewDeviceService()),
+			application.NewService(peerService),
 			application.NewService(&MetaService{}),
+		},
+		OnShutdown: func() {
+			peerService.Shutdown()
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

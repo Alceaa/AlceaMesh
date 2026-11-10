@@ -27,6 +27,17 @@ type AnnounceRequest struct {
 	Available bool
 }
 
+type Signal struct {
+	From       string    `json:"from"`
+	To         string    `json:"to"`
+	Kind       string    `json:"kind"`
+	Token      string    `json:"token"`
+	Candidates []string  `json:"candidates,omitempty"`
+	MeshIP     string    `json:"mesh_ip,omitempty"`
+	Name       string    `json:"name,omitempty"`
+	At         time.Time `json:"at"`
+}
+
 type Token struct {
 	Value     string    `json:"value"`
 	Label     string    `json:"label,omitempty"`

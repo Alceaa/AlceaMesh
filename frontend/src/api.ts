@@ -1,12 +1,21 @@
-import { DeviceService, MetaService, TunnelService } from "../bindings/alceacore.ru/alceamesh";
+import { DeviceService, MetaService, PeerService, TunnelService } from "../bindings/alceacore.ru/alceamesh";
 import type {
   ConfigSummary,
   ConnectionStatus,
   DeviceView,
+  NetworkTransport,
   NetworkView,
+  PeerStatus,
 } from "../bindings/alceacore.ru/alceamesh";
 
-export type { ConfigSummary, ConnectionStatus, DeviceView, NetworkView };
+export type {
+  ConfigSummary,
+  ConnectionStatus,
+  DeviceView,
+  NetworkTransport,
+  NetworkView,
+  PeerStatus,
+};
 
 export function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -28,4 +37,9 @@ export const mesh = {
   network: (): Promise<NetworkView> => DeviceService.Network(),
   setAccept: (accept: boolean): Promise<void> => DeviceService.SetAccept(accept),
   setName: (name: string): Promise<void> => DeviceService.SetName(name),
+
+  transport: (): Promise<NetworkTransport> => PeerService.Transport(),
+  connectPeer: (peerKey: string, name: string, meshIP: string): Promise<void> =>
+    PeerService.Connect(peerKey, name, meshIP),
+  disconnectPeer: (peerKey: string): Promise<void> => PeerService.Disconnect(peerKey),
 };

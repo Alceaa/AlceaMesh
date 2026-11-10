@@ -33,6 +33,7 @@ type DeviceView struct {
 	Name      string `json:"name"`
 	MeshIP    string `json:"meshIP"`
 	Platform  string `json:"platform"`
+	PublicKey string `json:"publicKey"`
 	Online    bool   `json:"online"`
 	Available bool   `json:"available"`
 	Self      bool   `json:"self"`
@@ -141,6 +142,7 @@ func deviceView(device coordinator.DeviceView, self bool) DeviceView {
 		Name:      device.Name,
 		MeshIP:    device.MeshIP,
 		Platform:  device.Platform,
+		PublicKey: device.PublicKey,
 		Online:    device.Online,
 		Available: device.Available,
 		Self:      self,

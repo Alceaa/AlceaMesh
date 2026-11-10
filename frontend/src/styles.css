@@ -253,6 +253,15 @@ body {
   font-size: 13px;
 }
 .hint { color: var(--text-faint); font-size: 12.5px; }
+.chip {
+  width: auto;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+button.badge { cursor: pointer; font-family: inherit; }
+button.badge:hover { background-color: var(--bg-surface-hover); }
 code {
   padding: 1px 5px;
   border-radius: 4px;

@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	DefaultPresenceTTL = 90 * time.Second
 	DefaultPool        = "10.0.0.0/24"
+
+	SignalTTL      = 2 * time.Minute
+	signalBoxLimit = 32
+	maxCandidates  = 8
 )
 
 type Options struct {
@@ -25,6 +30,9 @@ type Registry struct {
 	pool  netip.Prefix
 	ttl   time.Duration
 	now   func() time.Time
+
+	signalMu  sync.Mutex
+	signalBox map[string][]Signal
 }
 
 func NewRegistry(store Store, opts Options) (*Registry, error) {
@@ -44,7 +52,7 @@ func NewRegistry(store Store, opts Options) (*Registry, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Registry{store: store, pool: pool.Masked(), ttl: ttl, now: now}, nil
+	return &Registry{store: store, pool: pool.Masked(), ttl: ttl, now: now, signalBox: make(map[string][]Signal)}, nil
 }
 
 func (r *Registry) PresenceTTL() time.Duration {
@@ -245,6 +253,82 @@ func (r *Registry) Peers(availableOnly bool) ([]DeviceView, error) {
 		views = append(views, DeviceView{Device: device, Online: r.online(device, now)})
 	}
 	return views, nil
+}
+
+func (r *Registry) PostSignal(signal Signal) error {
+	signal.From = strings.TrimSpace(signal.From)
+	signal.To = strings.TrimSpace(signal.To)
+	signal.Kind = strings.TrimSpace(signal.Kind)
+
+	if signal.From == "" || signal.To == "" {
+		return fmt.Errorf("from and to are required")
+	}
+	if signal.From == signal.To {
+		return fmt.Errorf("cannot signal yourself")
+	}
+	if signal.Kind == "" {
+		return fmt.Errorf("kind is required")
+	}
+
+	signal.At = r.now()
+	signal.Candidates = dedupeCandidates(signal.Candidates)
+
+	r.signalMu.Lock()
+	defer r.signalMu.Unlock()
+
+	box := r.liveSignalsLocked(signal.To)
+	if len(box) >= signalBoxLimit {
+		box = box[1:]
+	}
+	r.signalBox[signal.To] = append(box, signal)
+	return nil
+}
+
+func (r *Registry) TakeSignals(peer string) []Signal {
+	peer = strings.TrimSpace(peer)
+	if peer == "" {
+		return nil
+	}
+
+	r.signalMu.Lock()
+	defer r.signalMu.Unlock()
+
+	box := r.liveSignalsLocked(peer)
+	delete(r.signalBox, peer)
+	return box
+}
+
+func (r *Registry) liveSignalsLocked(peer string) []Signal {
+	stored := r.signalBox[peer]
+	if len(stored) == 0 {
+		return nil
+	}
+
+	now := r.now()
+	live := make([]Signal, 0, len(stored))
+	for _, signal := range stored {
+		if now.Sub(signal.At) <= SignalTTL {
+			live = append(live, signal)
+		}
+	}
+	return live
+}
+
+func dedupeCandidates(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+		if len(out) == maxCandidates {
+			break
+		}
+	}
+	return out
 }
 
 func (r *Registry) DeleteDevice(id string) error {
