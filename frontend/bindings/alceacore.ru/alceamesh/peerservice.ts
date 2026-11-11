@@ -9,6 +9,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function ChooseInbox(): $CancellablePromise<string> {
+    return $Call.ByID(4033522224);
+}
+
 export function ClearFinished(): $CancellablePromise<void> {
     return $Call.ByID(2162675524);
 }
@@ -21,12 +25,24 @@ export function Disconnect(peerKey: string): $CancellablePromise<void> {
     return $Call.ByID(306184763, peerKey);
 }
 
+export function Inbox(): $CancellablePromise<string> {
+    return $Call.ByID(287601931);
+}
+
+export function OpenInbox(): $CancellablePromise<void> {
+    return $Call.ByID(286567111);
+}
+
 export function SendFiles(peerKey: string): $CancellablePromise<$models.TransferProgress> {
     return $Call.ByID(2947735430, peerKey);
 }
 
 export function SendFolder(peerKey: string): $CancellablePromise<$models.TransferProgress> {
     return $Call.ByID(275339243, peerKey);
+}
+
+export function SetSpeedLimit(kilobytesPerSecond: number): $CancellablePromise<void> {
+    return $Call.ByID(3824338973, kilobytesPerSecond);
 }
 
 export function Shutdown(): $CancellablePromise<void> {

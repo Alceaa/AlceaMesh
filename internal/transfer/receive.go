@@ -40,12 +40,14 @@ func (s *Session) Receive(ctx context.Context, inboxDir string, progress Progres
 		return Progress{}, err
 	}
 	defer stream.Close()
+	s.setRemote(conn.RemoteAddr())
 
 	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
 		return Progress{}, err
 	}
 
 	reader := bufio.NewReader(stream)
+	limit := s.receivePacer()
 	result := Progress{}
 	for {
 		head, err := readFrame(reader)
@@ -55,13 +57,13 @@ func (s *Session) Receive(ctx context.Context, inboxDir string, progress Progres
 		if head.Done {
 			return result, nil
 		}
-		if err := receiveFile(reader, stream, inboxDir, head, &result, progress); err != nil {
+		if err := receiveFile(ctx, reader, stream, limit, inboxDir, head, &result, progress); err != nil {
 			return result, err
 		}
 	}
 }
 
-func receiveFile(reader *bufio.Reader, stream *quic.Stream, inboxDir string, head frame, result *Progress, progress ProgressFunc) error {
+func receiveFile(ctx context.Context, reader *bufio.Reader, stream *quic.Stream, limit *pacer, inboxDir string, head frame, result *Progress, progress ProgressFunc) error {
 	rel, err := checkFrame(head)
 	if err != nil {
 		_ = writeReply(stream, reply{Error: err.Error()})
@@ -109,7 +111,7 @@ func receiveFile(reader *bufio.Reader, stream *quic.Stream, inboxDir string, hea
 		progress(*result)
 	}
 
-	if err := receiveData(reader, file, head.Size-offset, result, progress); err != nil {
+	if err := receiveData(ctx, limit, reader, file, head.Size-offset, result, progress); err != nil {
 		file.Close()
 		return err
 	}
@@ -163,7 +165,7 @@ func checkRel(rel string) error {
 	return nil
 }
 
-func receiveData(reader io.Reader, file *os.File, remaining int64, result *Progress, progress ProgressFunc) error {
+func receiveData(ctx context.Context, limit *pacer, reader io.Reader, file *os.File, remaining int64, result *Progress, progress ProgressFunc) error {
 	buffer := takeBuffer()
 	defer putBuffer(buffer)
 
@@ -177,6 +179,9 @@ func receiveData(reader io.Reader, file *os.File, remaining int64, result *Progr
 		n, readErr := reader.Read(buffer[:chunk])
 		if n > 0 {
 			if _, err := file.Write(buffer[:n]); err != nil {
+				return err
+			}
+			if err := limit.wait(ctx, n); err != nil {
 				return err
 			}
 			remaining -= int64(n)

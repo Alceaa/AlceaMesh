@@ -47,4 +47,10 @@ export const mesh = {
   sendFiles: (peerKey: string): Promise<TransferProgress> => PeerService.SendFiles(peerKey),
   sendFolder: (peerKey: string): Promise<TransferProgress> => PeerService.SendFolder(peerKey),
   clearFinished: (): Promise<void> => PeerService.ClearFinished(),
+
+  inbox: (): Promise<string> => PeerService.Inbox(),
+  chooseInbox: (): Promise<string> => PeerService.ChooseInbox(),
+  openInbox: (): Promise<void> => PeerService.OpenInbox(),
+  setSpeedLimit: (kilobytesPerSecond: number): Promise<void> =>
+    PeerService.SetSpeedLimit(kilobytesPerSecond),
 };

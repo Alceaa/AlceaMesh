@@ -90,7 +90,7 @@ func (s *Session) Send(ctx context.Context, addr net.Addr, path string, progress
 		if prepared.err != nil {
 			return result, prepared.err
 		}
-		if err := sendItem(reader, stream, current, prepared.sum, done, index+1, &result, progress); err != nil {
+		if err := sendItem(ctx, reader, stream, s.sendPacer(), current, prepared.sum, done, index+1, &result, progress); err != nil {
 			return result, err
 		}
 		done += current.size
@@ -114,7 +114,7 @@ func (s *Session) Send(ctx context.Context, addr net.Addr, path string, progress
 	return result, nil
 }
 
-func sendItem(reader *bufio.Reader, stream *quic.Stream, current item, sum string, base int64, index int, result *Progress, progress ProgressFunc) error {
+func sendItem(ctx context.Context, reader *bufio.Reader, stream *quic.Stream, limit *pacer, current item, sum string, base int64, index int, result *Progress, progress ProgressFunc) error {
 	file, err := os.Open(current.path)
 	if err != nil {
 		return err
@@ -156,7 +156,7 @@ func sendItem(reader *bufio.Reader, stream *quic.Stream, current item, sum strin
 		result.Sent = base + answer.Offset
 	}
 
-	if err := streamData(file, stream, result, progress); err != nil {
+	if err := streamData(ctx, limit, file, stream, result, progress); err != nil {
 		return err
 	}
 
@@ -209,7 +209,7 @@ func collectItems(path string) (string, []item, error) {
 	return name, items, nil
 }
 
-func streamData(file *os.File, stream *quic.Stream, result *Progress, progress ProgressFunc) error {
+func streamData(ctx context.Context, limit *pacer, file *os.File, stream *quic.Stream, result *Progress, progress ProgressFunc) error {
 	buffer := takeBuffer()
 	defer putBuffer(buffer)
 
@@ -219,6 +219,9 @@ func streamData(file *os.File, stream *quic.Stream, result *Progress, progress P
 		if n > 0 {
 			if _, err := stream.Write(buffer[:n]); err != nil {
 				return fmt.Errorf("transfer: send data: %w", err)
+			}
+			if err := limit.wait(ctx, n); err != nil {
+				return err
 			}
 			result.Sent += int64(n)
 			if progress != nil && time.Since(last) > 100*time.Millisecond {

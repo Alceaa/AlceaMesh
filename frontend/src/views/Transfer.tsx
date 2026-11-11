@@ -114,12 +114,8 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
       <section className="section">
         <div className="section-head">
           <h2>Доступные устройства</h2>
-          {transport?.publicEndpoint ? (
-            <>
-              <span className="spacer" />
-              <span className="hint mono">{transport.publicEndpoint}</span>
-            </>
-          ) : null}
+          <span className="spacer" />
+          <span className="hint mono">{transport?.publicEndpoint || transport?.relayEndpoint || ""}</span>
         </div>
         <Card>
           {others.length > 0 ? (
@@ -146,7 +142,7 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
                       <div className="device-sub">{details.join(" · ")}</div>
                     </div>
                     <span className="device-actions">
-                      {state === "direct" ? (
+                      {state === "direct" || state === "relay" ? (
                         <>
                           <button
                             className="btn chip btn-primary"
@@ -162,8 +158,11 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
                           >
                             Папка
                           </button>
-                          <button className="badge is-on" onClick={() => void disconnect(device)}>
-                            Прямое
+                          <button
+                            className={state === "direct" ? "badge is-on" : "badge"}
+                            onClick={() => void disconnect(device)}
+                          >
+                            {state === "direct" ? "Прямое" : "Через сервер"}
                           </button>
                         </>
                       ) : state === "idle" ? (
@@ -189,6 +188,11 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
           )}
         </Card>
         {transport?.message ? <div className="hint">{transport.message}</div> : null}
+        {transport?.relayNote ? (
+          <div className="hint">{transport.relayNote}</div>
+        ) : transport?.relay ? (
+          <div className="hint">Приём через сервер Alcea: {transport.relayEndpoint}</div>
+        ) : null}
       </section>
 
       {transfers.length > 0 ? (

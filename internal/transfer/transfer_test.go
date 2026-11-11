@@ -5,8 +5,10 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -301,6 +303,226 @@ func TestSendAndReceiveFolder(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(inbox, "Docs", "sub", "b.bin")); err != nil {
 		t.Errorf("nested file is missing: %v", err)
+	}
+}
+
+func TestPacerThrottles(t *testing.T) {
+	ctx := context.Background()
+	if newPacer(0) != nil {
+		t.Fatal("a zero rate must disable the pacer")
+	}
+	if err := newPacer(0).wait(ctx, 1<<20); err != nil {
+		t.Fatalf("disabled pacer returned %v", err)
+	}
+
+	limit := newPacer(200 * 1024)
+	start := time.Now()
+	if err := limit.wait(ctx, 100*1024); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 400*time.Millisecond {
+		t.Errorf("pacer waited only %v, want about 500ms", elapsed)
+	}
+
+	slow := newPacer(1024)
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	start = time.Now()
+	if err := slow.wait(cancelCtx, 1024); !errors.Is(err, context.Canceled) {
+		t.Fatalf("wait = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("cancel took %v, want the wait to be interrupted", elapsed)
+	}
+}
+
+func TestSendHonoursBandwidthLimit(t *testing.T) {
+	secret := randomSecret(t)
+	cert, err := Certificate(secret)
+	if err != nil {
+		t.Fatalf("certificate: %v", err)
+	}
+
+	sender, receiver, _, receiverAddr := loopbackPair(t)
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "limited.bin")
+	want := writeFile(t, source, 128*1024)
+	inbox := filepath.Join(dir, "inbox")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	server, err := NewSession(receiver, cert)
+	if err != nil {
+		t.Fatalf("server session: %v", err)
+	}
+	defer server.Close()
+	server.SetBandwidth(0, 256*1024)
+
+	client, err := NewSession(sender, cert)
+	if err != nil {
+		t.Fatalf("client session: %v", err)
+	}
+	defer client.Close()
+	client.SetBandwidth(256*1024, 0)
+
+	type outcome struct {
+		progress Progress
+		err      error
+	}
+	received := make(chan outcome, 1)
+	go func() {
+		progress, err := server.Receive(ctx, inbox, nil)
+		received <- outcome{progress, err}
+	}()
+
+	start := time.Now()
+	_, sendErr := client.Send(ctx, receiverAddr, source, nil)
+	elapsed := time.Since(start)
+	result := <-received
+	if sendErr != nil {
+		t.Fatalf("Send: %v (receiver said: %v)", sendErr, result.err)
+	}
+	if result.err != nil {
+		t.Fatalf("Receive: %v", result.err)
+	}
+	if elapsed < 350*time.Millisecond {
+		t.Errorf("128 KiB at 256 KiB/s took %v, want at least 350ms", elapsed)
+	}
+
+	got, err := os.ReadFile(filepath.Join(inbox, "limited.bin"))
+	if err != nil {
+		t.Fatalf("read received file: %v", err)
+	}
+	if sha256.Sum256(got) != sha256.Sum256(want) {
+		t.Error("throttled transfer produced a different file")
+	}
+}
+
+func TestRelaySessionAcceptsKnownPeer(t *testing.T) {
+	secret := randomSecret(t)
+	cert, err := Certificate(secret)
+	if err != nil {
+		t.Fatalf("certificate: %v", err)
+	}
+
+	relayConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen relay: %v", err)
+	}
+	dialer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen dialer: %v", err)
+	}
+	t.Cleanup(func() {
+		relayConn.Close()
+		dialer.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	resolve := func(net.Addr) (tls.Certificate, bool) {
+		return cert, true
+	}
+	relay, err := NewRelaySession(relayConn, cert, resolve)
+	if err != nil {
+		t.Fatalf("relay session: %v", err)
+	}
+	defer relay.Close()
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "hub.bin")
+	want := writeFile(t, source, 96*1024)
+	inbox := filepath.Join(dir, "inbox")
+
+	type outcome struct {
+		progress Progress
+		err      error
+	}
+	received := make(chan outcome, 1)
+	go func() {
+		progress, err := relay.Receive(ctx, inbox, nil)
+		received <- outcome{progress, err}
+	}()
+
+	client, err := NewSession(dialer, cert)
+	if err != nil {
+		t.Fatalf("client session: %v", err)
+	}
+	defer client.Close()
+
+	if _, err := client.Send(ctx, relayConn.LocalAddr(), source, nil); err != nil {
+		t.Fatalf("Send over the hub: %v", err)
+	}
+	result := <-received
+	if result.err != nil {
+		t.Fatalf("Receive over the hub: %v", result.err)
+	}
+	if relay.Remote() == nil {
+		t.Error("relay session must remember the remote address")
+	}
+
+	got, err := os.ReadFile(filepath.Join(inbox, "hub.bin"))
+	if err != nil {
+		t.Fatalf("read received file: %v", err)
+	}
+	if sha256.Sum256(got) != sha256.Sum256(want) {
+		t.Error("file received over the hub differs from the source")
+	}
+}
+
+func TestRelaySessionRejectsUnknownPeer(t *testing.T) {
+	secret := randomSecret(t)
+	cert, err := Certificate(secret)
+	if err != nil {
+		t.Fatalf("certificate: %v", err)
+	}
+
+	relayConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen relay: %v", err)
+	}
+	dialer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen dialer: %v", err)
+	}
+	t.Cleanup(func() {
+		relayConn.Close()
+		dialer.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	relay, err := NewRelaySession(relayConn, cert, func(net.Addr) (tls.Certificate, bool) {
+		return tls.Certificate{}, false
+	})
+	if err != nil {
+		t.Fatalf("relay session: %v", err)
+	}
+	defer relay.Close()
+
+	go func() {
+		_, _ = relay.Receive(ctx, filepath.Join(t.TempDir(), "inbox"), nil)
+	}()
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "intruder.bin")
+	writeFile(t, source, 4096)
+
+	client, err := NewSession(dialer, cert)
+	if err != nil {
+		t.Fatalf("client session: %v", err)
+	}
+	defer client.Close()
+
+	if _, err := client.Send(ctx, relayConn.LocalAddr(), source, nil); err == nil {
+		t.Error("a peer that is not in the Alcea network must not be able to send")
 	}
 }
 

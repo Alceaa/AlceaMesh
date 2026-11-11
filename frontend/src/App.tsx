@@ -83,7 +83,13 @@ export default function App() {
           <TransferView network={network} transport={transport} onRefresh={refresh} onNotify={notify} />
         )}
         {tab === "settings" && (
-          <SettingsView status={status} network={network} onRefresh={refresh} onNotify={notify} />
+          <SettingsView
+            status={status}
+            network={network}
+            transport={transport}
+            onRefresh={refresh}
+            onNotify={notify}
+          />
         )}
       </div>
 

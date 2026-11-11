@@ -7,10 +7,12 @@ import (
 )
 
 type Settings struct {
-	DeviceName  string `json:"device_name,omitempty"`
-	TunnelName  string `json:"tunnel_name,omitempty"`
-	ConfigText  string `json:"config_text,omitempty"`
-	AcceptFiles bool   `json:"accept_files,omitempty"`
+	DeviceName     string `json:"device_name,omitempty"`
+	TunnelName     string `json:"tunnel_name,omitempty"`
+	ConfigText     string `json:"config_text,omitempty"`
+	AcceptFiles    bool   `json:"accept_files,omitempty"`
+	InboxDir       string `json:"inbox_dir,omitempty"`
+	SpeedLimitKBps int    `json:"speed_limit_kbps,omitempty"`
 }
 
 func Dir() (string, error) {

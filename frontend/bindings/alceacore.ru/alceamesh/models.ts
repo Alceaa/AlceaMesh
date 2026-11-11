@@ -43,7 +43,11 @@ export interface Identity {
 export interface NetworkTransport {
     "publicEndpoint": string;
     "direct": boolean;
+    "relay": boolean;
+    "relayEndpoint": string;
+    "relayNote": string;
     "inbox": string;
+    "speedLimitKBps": number;
     "message": string;
     "peers": PeerStatus[] | null;
     "transfers": TransferProgress[] | null;

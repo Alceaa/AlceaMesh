@@ -9,6 +9,7 @@ import (
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/p2p"
 	"alceacore.ru/alceamesh/internal/settings"
+	"alceacore.ru/alceamesh/internal/transfer"
 )
 
 type PeerService struct {
@@ -20,6 +21,12 @@ type PeerService struct {
 	states    map[string]TransferProgress
 	order     []string
 	seq       int
+
+	relay       *transfer.Session
+	relayKey    string
+	relayAddr   string
+	relayNote   string
+	relayCancel context.CancelFunc
 }
 
 func NewPeerService() *PeerService {
@@ -43,22 +50,35 @@ type PeerStatus struct {
 type NetworkTransport struct {
 	PublicEndpoint string             `json:"publicEndpoint"`
 	Direct         bool               `json:"direct"`
+	Relay          bool               `json:"relay"`
+	RelayEndpoint  string             `json:"relayEndpoint"`
+	RelayNote      string             `json:"relayNote"`
 	Inbox          string             `json:"inbox"`
+	SpeedLimitKBps int                `json:"speedLimitKBps"`
 	Message        string             `json:"message"`
 	Peers          []PeerStatus       `json:"peers"`
 	Transfers      []TransferProgress `json:"transfers"`
 }
 
 func (s *PeerService) Transport() NetworkTransport {
-	agent, err := s.agentFor()
-	if err != nil {
-		return NetworkTransport{Message: friendlyText(err, fallbackPeer)}
-	}
+	s.ensureRelay()
+	relayReady, relayAddr, relayNote := s.relayStatus()
 
 	transport := NetworkTransport{
-		Inbox:     s.inboxDir(),
-		Transfers: s.transferStates(),
+		Inbox:          s.inboxDir(),
+		SpeedLimitKBps: storedSpeedLimit(),
+		Relay:          relayReady,
+		RelayEndpoint:  relayAddr,
+		RelayNote:      relayNote,
+		Transfers:      s.transferStates(),
 	}
+
+	agent, err := s.agentFor()
+	if err != nil {
+		transport.Message = friendlyText(err, fallbackPeer)
+		return transport
+	}
+
 	if public := agent.PublicAddr(); public.IsValid() {
 		transport.PublicEndpoint = public.String()
 	}
@@ -105,6 +125,7 @@ func (s *PeerService) Disconnect(peerKey string) error {
 
 func (s *PeerService) Shutdown() {
 	s.stopTransfers()
+	s.dropRelay()
 
 	s.mu.Lock()
 	agent := s.agent

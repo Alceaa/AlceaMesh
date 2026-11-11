@@ -37,6 +37,10 @@ var userMessages = []userMessage{
 	{"p2p: agent closed", "Прямые соединения недоступны. Перезапустите приложение."},
 
 	{"transfer: peer identity does not match", "Устройство не прошло проверку подлинности. Передача отменена."},
+	{"transfer: peer is not in the Alcea network", "Устройство не в сети Alcea. Передача отклонена."},
+	{"no recent network activity", "Устройство не отвечает. Проверьте, что VPN подключён у обоих."},
+	{"handshake did not complete", "Не удалось установить защищённое соединение. Проверьте, что VPN подключён у обоих."},
+	{"cannot assign requested address", "Адрес VPN недоступен. Подключите VPN и повторите."},
 	{"transfer: checksum mismatch", "Файл принят с ошибкой. Отправьте его ещё раз."},
 	{"transfer: connection lost", "Связь с устройством прервалась. Повторите передачу."},
 	{"transfer: send data", "Связь с устройством прервалась. Повторите передачу."},

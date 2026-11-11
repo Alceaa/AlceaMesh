@@ -14,7 +14,7 @@ import (
 	"alceacore.ru/alceamesh/internal/wgengine"
 )
 
-const version = "0.6.0-m6"
+const version = "0.7.0-m7"
 
 func main() {
 	if isWindowsService() {

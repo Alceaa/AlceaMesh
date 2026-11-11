@@ -4,15 +4,23 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
 )
 
 type Session struct {
-	transport *quic.Transport
-	cert      tls.Certificate
-	listener  *quic.Listener
+	transport  *quic.Transport
+	cert       tls.Certificate
+	listener   *quic.Listener
+	resolve    RelayResolver
+	remoteAddr atomic.Value
+
+	mu          sync.Mutex
+	sendRate    int64
+	receiveRate int64
 }
 
 func NewSession(pc net.PacketConn, cert tls.Certificate) (*Session, error) {
@@ -25,6 +33,25 @@ func NewSession(pc net.PacketConn, cert tls.Certificate) (*Session, error) {
 		return nil, fmt.Errorf("transfer: listen: %w", err)
 	}
 	return &Session{transport: transport, cert: cert, listener: listener}, nil
+}
+
+func (s *Session) SetBandwidth(sendBytesPerSecond, receiveBytesPerSecond int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sendRate = sendBytesPerSecond
+	s.receiveRate = receiveBytesPerSecond
+}
+
+func (s *Session) sendPacer() *pacer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return newPacer(s.sendRate)
+}
+
+func (s *Session) receivePacer() *pacer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return newPacer(s.receiveRate)
 }
 
 func (s *Session) Close() error {

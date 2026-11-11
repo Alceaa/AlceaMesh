@@ -86,6 +86,7 @@ func (s *DeviceService) Network() (NetworkView, error) {
 		view.Devices = append(view.Devices, deviceView(peer, isSelf))
 	}
 	sortDevices(view.Devices)
+	rememberDevices(view.Devices)
 	return view, nil
 }
 
