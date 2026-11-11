@@ -33,12 +33,12 @@ export function ServiceRunning(): $CancellablePromise<boolean> {
     return $Call.ByID(2052095654);
 }
 
-export function SetAutostart(enabled: boolean): $CancellablePromise<void> {
-    return $Call.ByID(3070388057, enabled);
-}
-
 export function SetAutoUpdate(enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(304941594, enabled);
+}
+
+export function SetAutostart(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3070388057, enabled);
 }
 
 export function StartService(asAdmin: boolean): $CancellablePromise<$models.ServiceState> {
