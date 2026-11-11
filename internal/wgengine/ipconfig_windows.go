@@ -5,7 +5,6 @@ package wgengine
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/netip"
 	"strings"
@@ -30,7 +29,8 @@ func (t *Tunnel) configureInterface(tunDev tun.Device, mtu int) error {
 		return err
 	}
 	routes := allowedIPRoutes(t.Config)
-	defaultRoute := hasDefaultRoute(routes)
+	capturesAll := capturesAllTraffic(routes)
+	endpoints := resolveEndpointAddrs(t.Config)
 
 	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
 		if err := luid.SetIPAddressesForFamily(family, addresses); err != nil {
@@ -41,13 +41,13 @@ func (t *Tunnel) configureInterface(tunDev tun.Device, mtu int) error {
 				return fmt.Errorf("set routes: %w", err)
 			}
 		}
-		if err := setIPInterface(luid, family, mtu, defaultRoute); err != nil {
+		if err := setIPInterface(luid, family, mtu, capturesAll); err != nil {
 			return fmt.Errorf("configure ip interface: %w", err)
 		}
 	}
 
-	if err := t.preserveEndpointRoutes(defaultRoute); err != nil {
-		log.Printf("alceamesh: warning: could not pin endpoint routes: %v", err)
+	if err := t.pinEndpointRoutes(endpoints, routes); err != nil {
+		return fmt.Errorf("pin endpoint routes: %w", err)
 	}
 
 	if err := setDNS(luid, t.Config.Interface.DNS); err != nil {
@@ -104,9 +104,37 @@ func tableOff(cfg *wgconf.Config) bool {
 	return strings.EqualFold(cfg.Interface.Table, "off")
 }
 
-func hasDefaultRoute(routes []*winipcfg.RouteData) bool {
+func capturesAllTraffic(routes []*winipcfg.RouteData) bool {
+	var v4Any, v4Low, v4High, v6Any, v6Low, v6High bool
 	for _, route := range routes {
-		if route.Destination.Bits() == 0 {
+		prefix := route.Destination
+		switch {
+		case prefix.Addr().Is4():
+			switch {
+			case prefix.Bits() == 0:
+				v4Any = true
+			case prefix == netip.MustParsePrefix("0.0.0.0/1"):
+				v4Low = true
+			case prefix == netip.MustParsePrefix("128.0.0.0/1"):
+				v4High = true
+			}
+		default:
+			switch {
+			case prefix.Bits() == 0:
+				v6Any = true
+			case prefix == netip.MustParsePrefix("::/1"):
+				v6Low = true
+			case prefix == netip.MustParsePrefix("8000::/1"):
+				v6High = true
+			}
+		}
+	}
+	return v4Any || (v4Low && v4High) || v6Any || (v6Low && v6High)
+}
+
+func capturedByRoutes(addr netip.Addr, routes []*winipcfg.RouteData) bool {
+	for _, route := range routes {
+		if route.Destination.Contains(addr) {
 			return true
 		}
 	}
@@ -164,23 +192,38 @@ func allowedIPRoutes(cfg *wgconf.Config) []*winipcfg.RouteData {
 	return routes
 }
 
-func (t *Tunnel) preserveEndpointRoutes(defaultRoute bool) error {
-	if !defaultRoute {
-		return nil
-	}
-	nextHop, gatewayLUID, ok := defaultRouteV4()
-	if !ok {
-		return errors.New("no IPv4 default route found")
-	}
-	var firstErr error
+func resolveEndpointAddrs(cfg *wgconf.Config) []netip.Addr {
+	var endpoints []netip.Addr
 	seen := make(map[netip.Addr]bool)
-	for _, peer := range t.Config.Peers {
+	for _, peer := range cfg.Peers {
 		addr, ok := resolveEndpointV4(peer.Endpoint)
 		if !ok || seen[addr] {
 			continue
 		}
 		seen[addr] = true
+		endpoints = append(endpoints, addr)
+	}
+	return endpoints
+}
 
+func (t *Tunnel) pinEndpointRoutes(endpoints []netip.Addr, routes []*winipcfg.RouteData) error {
+	var pinned []netip.Addr
+	for _, addr := range endpoints {
+		if capturedByRoutes(addr, routes) {
+			pinned = append(pinned, addr)
+		}
+	}
+	if len(pinned) == 0 {
+		return nil
+	}
+
+	nextHop, gatewayLUID, ok := defaultRouteV4()
+	if !ok {
+		return errors.New("no IPv4 default route found")
+	}
+
+	var firstErr error
+	for _, addr := range pinned {
 		prefix := netip.PrefixFrom(addr, 32)
 		err := gatewayLUID.AddRoute(prefix, nextHop, 0)
 		if err == nil {

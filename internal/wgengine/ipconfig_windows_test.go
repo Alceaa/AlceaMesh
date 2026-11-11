@@ -54,19 +54,47 @@ func TestAllowedIPRoutesMasksAndDedupes(t *testing.T) {
 	}
 }
 
-func TestHasDefaultRoute(t *testing.T) {
-	withDefault := allowedIPRoutes(&wgconf.Config{
-		Peers: []wgconf.Peer{{AllowedIPs: []string{"0.0.0.0/0"}}},
+func TestCapturesAllTraffic(t *testing.T) {
+	cases := []struct {
+		name   string
+		allows []string
+		want   bool
+	}{
+		{"literal default", []string{"0.0.0.0/0"}, true},
+		{"split default halves", []string{"0.0.0.0/1", "128.0.0.0/1"}, true},
+		{"split default with v6", []string{"0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"}, true},
+		{"v6 default only", []string{"::/0"}, true},
+		{"one half only", []string{"0.0.0.0/1"}, false},
+		{"mesh only", []string{"10.66.66.0/24"}, false},
+		{"mesh with v6 half", []string{"10.66.66.0/24", "128.0.0.0/1"}, false},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			routes := allowedIPRoutes(&wgconf.Config{Peers: []wgconf.Peer{{AllowedIPs: item.allows}}})
+			if got := capturesAllTraffic(routes); got != item.want {
+				t.Errorf("capturesAllTraffic(%v) = %v, want %v", item.allows, got, item.want)
+			}
+		})
+	}
+}
+
+func TestCapturedByRoutes(t *testing.T) {
+	defaultTunnel := allowedIPRoutes(&wgconf.Config{
+		Peers: []wgconf.Peer{{AllowedIPs: []string{"0.0.0.0/1", "128.0.0.0/1"}}},
 	})
-	if !hasDefaultRoute(withDefault) {
-		t.Error("hasDefaultRoute = false, want true")
+	server := netip.MustParseAddr("89.19.217.209")
+	if !capturedByRoutes(server, defaultTunnel) {
+		t.Error("a full-tunnel config captures the server address — the endpoint must be pinned")
 	}
 
 	splitTunnel := allowedIPRoutes(&wgconf.Config{
-		Peers: []wgconf.Peer{{AllowedIPs: []string{"10.0.0.0/24", "fd00::/64"}}},
+		Peers: []wgconf.Peer{{AllowedIPs: []string{"10.66.66.0/24"}}},
 	})
-	if hasDefaultRoute(splitTunnel) {
-		t.Error("hasDefaultRoute = true, want false")
+	if capturedByRoutes(server, splitTunnel) {
+		t.Error("a split tunnel does not capture the server address — nothing to pin")
+	}
+	if !capturedByRoutes(netip.MustParseAddr("10.66.66.5"), splitTunnel) {
+		t.Error("the mesh address lives inside the split tunnel")
 	}
 }
 

@@ -79,6 +79,7 @@ var userMessages = []userMessage{
 	{"is already up", "VPN уже подключён."},
 	{"interface configuration is not implemented", "VPN пока не поддерживается на этой системе."},
 	{"no IPv4 default route found", "Не удалось найти сеть для VPN. Проверьте подключение к интернету."},
+	{"pin endpoint routes", "Не удалось подготовить маршруты VPN. Проверьте подключение к интернету и повторите."},
 	{"create adapter", "Не удалось включить VPN. Перезапустите службу «AlceaMesh» и повторите."},
 	{"configure interface", "Не удалось включить VPN. Перезапустите службу «AlceaMesh» и повторите."},
 	{"configure ip interface", "Не удалось включить VPN. Перезапустите службу «AlceaMesh» и повторите."},
