@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { mesh, messageOf } from "../api";
-import type { ConnectionStatus, NetworkTransport, NetworkView, ServiceState } from "../api";
+import type { ConnectionStatus, NetworkTransport, NetworkView, ServiceState, UpdateState } from "../api";
 import { Card, Switch } from "../components";
 import type { Notify } from "../components";
 
@@ -25,6 +25,7 @@ export default function HomeView({
 }: Props) {
   const [pending, setPending] = useState(false);
   const [service, setService] = useState<ServiceState | null>(null);
+  const [update, setUpdate] = useState<UpdateState | null>(null);
 
   const configured = status?.configured ?? false;
   const running = status?.running ?? false;
@@ -40,6 +41,15 @@ export default function HomeView({
       await onRefresh(true);
     } catch (error) {
       onNotify("error", "VPN", messageOf(error));
+    }
+  };
+
+  const applyUpdate = async () => {
+    try {
+      const message = await mesh.installUpdate();
+      onNotify("ok", "Обновление", message);
+    } catch (error) {
+      onNotify("error", "Обновление", messageOf(error));
     }
   };
 
@@ -61,6 +71,26 @@ export default function HomeView({
       cancelled = true;
     };
   }, [serviceUp]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const state = await mesh.updateCheck();
+          if (cancelled || !state.available) return;
+          setUpdate(state);
+          if (state.auto) await mesh.installUpdate();
+        } catch {
+          setUpdate(null);
+        }
+      })();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const toggleConnection = async () => {
     setPending(true);
@@ -91,6 +121,35 @@ export default function HomeView({
 
   return (
     <>
+      {update?.available && !update.auto ? (
+        <section className="section">
+          <div className="section-head">
+            <h2>Обновление версии</h2>
+            <span className="spacer" />
+            <span className="badge is-on">{update.latest}</span>
+          </div>
+          <Card>
+            <div className="card-body">
+              <div className="row">
+                <span className="label">Установлено</span>
+                <span className="value mono">{update.current}</span>
+              </div>
+              {update.notes ? (
+                <div className="row">
+                  <span className="label">Что нового</span>
+                  <span className="value">{update.notes}</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="card-foot">
+              <button className="btn" type="button" onClick={() => void applyUpdate()}>
+                Обновить
+              </button>
+            </div>
+          </Card>
+        </section>
+      ) : null}
+
       <section className="section">
         <div className="section-head">
           <h2>Подключение VPN</h2>

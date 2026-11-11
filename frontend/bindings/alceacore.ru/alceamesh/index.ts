@@ -21,5 +21,6 @@ export type {
     NetworkView,
     PeerStatus,
     ServiceState,
-    TransferProgress
+    TransferProgress,
+    UpdateState
 } from "./models.js";

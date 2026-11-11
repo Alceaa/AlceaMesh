@@ -91,6 +91,30 @@ func SetAppAutostart(enabled bool, exePath string) error {
 	return autostart.Set(enabled, exePath)
 }
 
+const appWasRunningMarker = "ALCEAMESH-APP-WAS-RUNNING"
+
+func stopRunningComponents(report func(string, ...any)) bool {
+	script := fmt.Sprintf(`$app = Get-Process alceamesh -ErrorAction SilentlyContinue
+if ($app) { $app | Stop-Process -Force; Start-Sleep -Milliseconds 800; '%s' }
+sc.exe stop %s | Out-Null
+`, appWasRunningMarker, ServiceName)
+
+	output, err := RunPowerShell(script)
+	if err != nil {
+		report("Не удалось остановить компоненты: %v", err)
+	}
+	return strings.Contains(output, appWasRunningMarker)
+}
+
+func startApp(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	command := exec.Command("explorer.exe", path)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return command.Start()
+}
+
 func installService(exePath string, report func(string, ...any)) error {
 	if output, err := run(exePath, "install"); err != nil {
 		if strings.Contains(output, "already installed") {

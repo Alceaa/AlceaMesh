@@ -13,6 +13,8 @@ type Settings struct {
 	AcceptFiles    bool   `json:"accept_files,omitempty"`
 	InboxDir       string `json:"inbox_dir,omitempty"`
 	SpeedLimitKBps int    `json:"speed_limit_kbps,omitempty"`
+	AutoUpdate     *bool  `json:"auto_update,omitempty"`
+	UpdateManifest string `json:"update_manifest,omitempty"`
 }
 
 func Dir() (string, error) {

@@ -69,7 +69,10 @@ func Validate(dir string) error {
 }
 
 func Plan(options Options) []string {
-	steps := []string{fmt.Sprintf("Скопировать файлы в %s", options.Dir)}
+	steps := []string{
+		"Остановить приложение и службу AlceaMesh, если они запущены",
+		fmt.Sprintf("Скопировать файлы в %s", options.Dir),
+	}
 	if options.Service {
 		steps = append(steps, "Установить службу AlceaMesh (нужна для VPN) и запустить её")
 	}
@@ -97,10 +100,17 @@ func Install(payload fs.FS, selfPath string, options Options, log func(string)) 
 			log(fmt.Sprintf(format, args...))
 		}
 	}
+	appRunning := false
 
-	tasks := []step{{title: "Создаю папку", run: func() error {
-		return os.MkdirAll(options.Dir, 0o755)
-	}}}
+	tasks := []step{
+		{title: "Останавливаю запущенные компоненты", run: func() error {
+			appRunning = stopRunningComponents(report)
+			return nil
+		}},
+		{title: "Создаю папку", run: func() error {
+			return os.MkdirAll(options.Dir, 0o755)
+		}},
+	}
 
 	for _, name := range PayloadFiles() {
 		name := name
@@ -169,6 +179,13 @@ func Install(payload fs.FS, selfPath string, options Options, log func(string)) 
 		}
 		if err := task.run(); err != nil {
 			return fmt.Errorf("%s: %w", strings.ToLower(task.title), err)
+		}
+	}
+
+	if appRunning && !options.DryRun {
+		report("Запускаю приложение заново…")
+		if err := startApp(filepath.Join(options.Dir, "alceamesh.exe")); err != nil {
+			report("Не удалось запустить приложение: %v", err)
 		}
 	}
 	report("Готово.")

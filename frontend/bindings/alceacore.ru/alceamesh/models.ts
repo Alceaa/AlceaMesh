@@ -95,3 +95,12 @@ export interface TransferProgress {
     "done": boolean;
     "error": string;
 }
+
+export interface UpdateState {
+    "current": string;
+    "latest": string;
+    "notes": string;
+    "available": boolean;
+    "auto": boolean;
+    "message": string;
+}

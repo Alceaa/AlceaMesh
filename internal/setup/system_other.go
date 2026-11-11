@@ -37,3 +37,11 @@ func installService(string, func(string, ...any)) error {
 func removeService(string, func(string, ...any)) error {
 	return errUnsupported
 }
+
+func stopRunningComponents(func(string, ...any)) bool {
+	return false
+}
+
+func startApp(string) error {
+	return errUnsupported
+}

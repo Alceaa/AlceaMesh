@@ -8,6 +8,7 @@ import type {
   PeerStatus,
   ServiceState,
   TransferProgress,
+  UpdateState,
 } from "../bindings/alceacore.ru/alceamesh";
 
 export type {
@@ -19,6 +20,7 @@ export type {
   PeerStatus,
   ServiceState,
   TransferProgress,
+  UpdateState,
 };
 
 export function messageOf(error: unknown): string {
@@ -36,6 +38,11 @@ export const mesh = {
   hideToTray: (): Promise<void> => MetaService.HideToTray(),
   startService: (asAdmin: boolean): Promise<ServiceState> => MetaService.StartService(asAdmin),
   serviceRunning: (): Promise<boolean> => MetaService.ServiceRunning(),
+  updateCheck: (): Promise<UpdateState> => MetaService.UpdateCheck(),
+  installUpdate: (): Promise<string> => MetaService.InstallUpdate(),
+  autoUpdate: (): Promise<boolean> => MetaService.AutoUpdate(),
+  setAutoUpdate: (enabled: boolean): Promise<void> => MetaService.SetAutoUpdate(enabled),
+  updateSource: (): Promise<string> => MetaService.UpdateSource(),
 
   status: (): Promise<ConnectionStatus> => TunnelService.Status(),
   connect: (): Promise<void> => TunnelService.Connect(),

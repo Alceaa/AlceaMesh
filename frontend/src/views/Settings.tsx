@@ -16,6 +16,8 @@ export default function SettingsView({ status, network, transport, onRefresh, on
   const [name, setName] = useState(network?.identity.name ?? "");
   const [limit, setLimit] = useState("0");
   const [autostart, setAutostart] = useState(false);
+  const [autoUpdate, setAutoUpdate] = useState(true);
+  const [updateSource, setUpdateSource] = useState("");
   const [tray, setTray] = useState(false);
   const [version, setVersion] = useState("");
   const [saving, setSaving] = useState(false);
@@ -23,14 +25,18 @@ export default function SettingsView({ status, network, transport, onRefresh, on
   useEffect(() => {
     void (async () => {
       try {
-        const [enabled, trayReady, build] = await Promise.all([
+        const [enabled, trayReady, build, auto, source] = await Promise.all([
           mesh.autostart(),
           mesh.tray(),
           mesh.version(),
+          mesh.autoUpdate(),
+          mesh.updateSource(),
         ]);
         setAutostart(enabled);
         setTray(trayReady);
         setVersion(build);
+        setAutoUpdate(auto);
+        setUpdateSource(source);
       } catch {
         setTray(false);
       }
@@ -44,6 +50,33 @@ export default function SettingsView({ status, network, transport, onRefresh, on
       onNotify("ok", "Автозапуск", next ? "AlceaMesh запустится при входе в систему" : "Автозапуск отключён");
     } catch (error) {
       onNotify("error", "Автозапуск", messageOf(error));
+    }
+  };
+
+  const toggleAutoUpdate = async (next: boolean) => {
+    try {
+      await mesh.setAutoUpdate(next);
+      setAutoUpdate(await mesh.autoUpdate());
+      onNotify(
+        "ok",
+        "Обновления",
+        next ? "AlceaMesh будет обновляться автоматически" : "Автоматические обновления отключены",
+      );
+    } catch (error) {
+      onNotify("error", "Обновления", messageOf(error));
+    }
+  };
+
+  const checkUpdates = async () => {
+    try {
+      const state = await mesh.updateCheck();
+      if (state.available) {
+        onNotify("ok", "Обновления", `Доступна версия ${state.latest}`);
+        return;
+      }
+      onNotify("ok", "Обновления", state.message || "Установлена последняя версия");
+    } catch (error) {
+      onNotify("error", "Обновления", messageOf(error));
     }
   };
 
@@ -250,7 +283,18 @@ export default function SettingsView({ status, network, transport, onRefresh, on
             </div>
             <Switch checked={autostart} onToggle={(next) => void toggleAutostart(next)} />
           </div>
+          <div className="switch-row">
+            <div className="text">
+              <span className="title">Обновляться автоматически</span>
+              <span className="hint">Обновления скачиваются и устанавливаются сами</span>
+            </div>
+            <Switch checked={autoUpdate} onToggle={(next) => void toggleAutoUpdate(next)} />
+          </div>
         </Card>
+        <button className="btn" onClick={() => void checkUpdates()}>
+          Проверить обновления
+        </button>
+        {updateSource ? <span className="hint mono">{updateSource}</span> : null}
         {tray ? (
           <button className="btn" onClick={() => void hideToTray()}>
             Свернуть в трей

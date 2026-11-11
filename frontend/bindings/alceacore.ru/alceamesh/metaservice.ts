@@ -9,6 +9,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function AutoUpdate(): $CancellablePromise<boolean> {
+    return $Call.ByID(2880307394);
+}
+
 export function Autostart(): $CancellablePromise<boolean> {
     return $Call.ByID(536645873);
 }
@@ -21,6 +25,10 @@ export function HideToTray(): $CancellablePromise<void> {
     return $Call.ByID(1619286437);
 }
 
+export function InstallUpdate(): $CancellablePromise<string> {
+    return $Call.ByID(543352046);
+}
+
 export function ServiceRunning(): $CancellablePromise<boolean> {
     return $Call.ByID(2052095654);
 }
@@ -29,12 +37,24 @@ export function SetAutostart(enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(3070388057, enabled);
 }
 
+export function SetAutoUpdate(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(304941594, enabled);
+}
+
 export function StartService(asAdmin: boolean): $CancellablePromise<$models.ServiceState> {
     return $Call.ByID(3873677851, asAdmin);
 }
 
 export function Tray(): $CancellablePromise<boolean> {
     return $Call.ByID(1811844372);
+}
+
+export function UpdateCheck(): $CancellablePromise<$models.UpdateState> {
+    return $Call.ByID(1163871591);
+}
+
+export function UpdateSource(): $CancellablePromise<string> {
+    return $Call.ByID(3048833656);
 }
 
 export function Version(): $CancellablePromise<string> {
