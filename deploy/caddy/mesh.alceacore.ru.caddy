@@ -1,0 +1,3 @@
+mesh.alceacore.ru {
+	reverse_proxy 10.66.66.1:7788
+}

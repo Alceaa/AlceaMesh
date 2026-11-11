@@ -12,7 +12,7 @@ import (
 	"alceacore.ru/alceamesh/internal/wgconf"
 )
 
-const coordinatorBaseURL = "http://vps.alceacore.ru:7788"
+const coordinatorBaseURL = "https://mesh.alceacore.ru"
 
 type DeviceService struct{}
 

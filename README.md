@@ -85,21 +85,6 @@
 - **mesh IP** при отсутствии привязки выдаётся автоматически из пула (`--pool`): пропускаются
   сетевой, широковещательный адреса и шлюз (первый хост).
 
-### Запуск на VPS
-
-```powershell
-$env:ALCEAMESH_ADMIN_KEY = "<длинный случайный ключ>"
-.\bin\alceacoord.exe run --listen :7788 --db alceacoord.db --pool 10.0.0.0/24
-```
-
-Админ-ключ (`--admin-key` / env `ALCEAMESH_ADMIN_KEY`) защищает управление токенами и удаление
-устройств. Сервис слушает plain HTTP — на VPS его принято ставить за TLS-обратный прокси.
-
-Создать токен можно и локально на сервере, без обращения к API:
-
-```powershell
-.\bin\alceacoord.exe token --db alceacoord.db --label "ноутбук Алисы" --ttl-hours 24
-```
 
 ### API
 
@@ -126,7 +111,7 @@ $env:ALCEAMESH_ADMIN_KEY = "<длинный случайный ключ>"
 ### CLI
 
 ```powershell
-$env:ALCEAMESH_COORDINATOR = "http://vps.alceacore.ru:7788"
+$env:ALCEAMESH_COORDINATOR = "https://mesh.alceacore.ru"   # адрес по умолчанию в приложении; CLI требует задать явно
 .\bin\alceamesh-cli.exe coord ping
 .\bin\alceamesh-cli.exe coord devices --admin-key <ключ>        # таблица: имя, mesh ip, online/offline
 $t = .\bin\alceamesh-cli.exe coord token --admin-key <ключ> --label "телефон"
