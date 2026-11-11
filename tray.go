@@ -9,9 +9,32 @@ import (
 //go:embed assets/icon.png
 var trayIcon []byte
 
-var trayReady bool
+var (
+	trayReady  bool
+	mainWindow *application.WebviewWindow
+)
 
-func setupTray(window *application.WebviewWindow) {
+func newMainWindow() *application.WebviewWindow {
+	state := application.WindowStateNormal
+	if startMinimised {
+		state = application.WindowStateMinimised
+	}
+	return appInstance.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "AlceaMesh",
+		Width:            520,
+		Height:           820,
+		MinWidth:         440,
+		MinHeight:        620,
+		StartState:       state,
+		BackgroundColour: application.NewRGB(5, 5, 6),
+		URL:              "/",
+		Windows: application.WindowsWindow{
+			Theme: application.Dark,
+		},
+	})
+}
+
+func setupTray() {
 	tray := appInstance.SystemTray.New()
 	tray.SetTooltip("AlceaMesh")
 	if len(trayIcon) > 0 {
@@ -20,7 +43,7 @@ func setupTray(window *application.WebviewWindow) {
 
 	menu := application.NewMenu()
 	menu.Add("Открыть AlceaMesh").OnClick(func(*application.Context) {
-		showMainWindow(window)
+		showMainWindow()
 	})
 	menu.Add("Свернуть в трей").OnClick(func(*application.Context) {
 		hideToTray()
@@ -32,18 +55,21 @@ func setupTray(window *application.WebviewWindow) {
 	tray.SetMenu(menu)
 
 	tray.OnClick(func() {
-		showMainWindow(window)
+		showMainWindow()
 	})
 
 	trayReady = true
 }
 
-func showMainWindow(window *application.WebviewWindow) {
-	if window == nil {
+func showMainWindow() {
+	if appInstance == nil {
 		return
 	}
-	window.Show()
-	window.Focus()
+	if mainWindow == nil {
+		mainWindow = newMainWindow()
+	}
+	mainWindow.Show()
+	mainWindow.Focus()
 }
 
 func hideToTray() {

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { mesh, messageOf } from "../api";
-import type { ConnectionStatus, NetworkTransport, NetworkView } from "../api";
+import type { ConnectionStatus, NetworkTransport, NetworkView, ServiceState } from "../api";
 import { Card, Switch } from "../components";
 import type { Notify } from "../components";
 
@@ -24,12 +24,43 @@ export default function HomeView({
   onGoSettings,
 }: Props) {
   const [pending, setPending] = useState(false);
+  const [service, setService] = useState<ServiceState | null>(null);
 
   const configured = status?.configured ?? false;
   const running = status?.running ?? false;
+  const serviceUp = status?.serviceUp ?? false;
   const accept = network?.identity.accept ?? false;
   const direct = transport?.direct ?? false;
   const connectionLabel = !running ? "—" : direct ? "Прямое" : "Через сервер";
+
+  const startService = async (asAdmin: boolean) => {
+    try {
+      const result = await mesh.startService(asAdmin);
+      setService(result);
+      await onRefresh(true);
+    } catch (error) {
+      onNotify("error", "VPN", messageOf(error));
+    }
+  };
+
+  useEffect(() => {
+    if (serviceUp) {
+      setService(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await mesh.startService(false);
+        if (!cancelled) setService(result);
+      } catch {
+        if (!cancelled) setService(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceUp]);
 
   const toggleConnection = async () => {
     setPending(true);
@@ -108,8 +139,24 @@ export default function HomeView({
 
         {status && !status.serviceUp && (
           <div className="error">
-            VPN недоступен: служба AlceaMesh не отвечает. Перезапустите приложение или запустите службу
-            «AlceaMesh» от имени администратора.
+            <div>
+              {service?.message ||
+                "VPN недоступен: служба AlceaMesh не отвечает. Перезапустите приложение или запустите службу от имени администратора."}
+            </div>
+            {service?.needsRights ? (
+              <div className="row" style={{ marginTop: 10 }}>
+                <button className="btn" onClick={() => void startService(true)}>
+                  Запустить службу с правами администратора
+                </button>
+              </div>
+            ) : null}
+            {service && !service.installed ? (
+              <div className="row" style={{ marginTop: 10 }}>
+                <button className="btn" onClick={() => void startService(false)}>
+                  Проверить службу ещё раз
+                </button>
+              </div>
+            ) : null}
           </div>
         )}
       </section>

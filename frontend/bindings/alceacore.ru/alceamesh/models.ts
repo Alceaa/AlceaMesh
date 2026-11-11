@@ -71,6 +71,13 @@ export interface PeerStatus {
     "message": string;
 }
 
+export interface ServiceState {
+    "up": boolean;
+    "installed": boolean;
+    "needsRights": boolean;
+    "message": string;
+}
+
 export interface TransferProgress {
     "key": string;
     "direction": string;

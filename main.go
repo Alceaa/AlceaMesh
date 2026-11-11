@@ -12,15 +12,14 @@ var assets embed.FS
 
 const appVersion = "0.8.0-m8"
 
-var appInstance *application.App
+var (
+	appInstance    *application.App
+	startMinimised bool
+)
 
 func main() {
 	peerService := NewPeerService()
-
-	startState := application.WindowStateNormal
-	if trayRequested() {
-		startState = application.WindowStateMinimised
-	}
+	startMinimised = trayRequested()
 
 	appInstance = application.New(application.Options{
 		Name:        "AlceaMesh",
@@ -42,21 +41,8 @@ func main() {
 		},
 	})
 
-	window := appInstance.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "AlceaMesh",
-		Width:            520,
-		Height:           820,
-		MinWidth:         440,
-		MinHeight:        620,
-		StartState:       startState,
-		BackgroundColour: application.NewRGB(5, 5, 6),
-		URL:              "/",
-		Windows: application.WindowsWindow{
-			Theme: application.Dark,
-		},
-	})
-
-	setupTray(window)
+	mainWindow = newMainWindow()
+	setupTray()
 
 	if err := appInstance.Run(); err != nil {
 		log.Fatal(err)

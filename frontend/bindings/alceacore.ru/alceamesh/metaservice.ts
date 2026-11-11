@@ -5,6 +5,10 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 export function Autostart(): $CancellablePromise<boolean> {
     return $Call.ByID(536645873);
 }
@@ -17,8 +21,16 @@ export function HideToTray(): $CancellablePromise<void> {
     return $Call.ByID(1619286437);
 }
 
+export function ServiceRunning(): $CancellablePromise<boolean> {
+    return $Call.ByID(2052095654);
+}
+
 export function SetAutostart(enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(3070388057, enabled);
+}
+
+export function StartService(asAdmin: boolean): $CancellablePromise<$models.ServiceState> {
+    return $Call.ByID(3873677851, asAdmin);
 }
 
 export function Tray(): $CancellablePromise<boolean> {

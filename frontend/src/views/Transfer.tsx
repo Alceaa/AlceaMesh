@@ -184,7 +184,11 @@ export default function TransferView({ network, transport, onRefresh, onNotify }
               })}
             </div>
           ) : (
-            <div className="empty">Сейчас нет устройств, готовых принять файл.</div>
+            <div className="empty">
+              {network?.message
+                ? network.message
+                : "Сейчас нет устройств, готовых принять файл. Устройство появится в списке, когда второе устройство включит «Принимать файлы»."}
+            </div>
           )}
         </Card>
         {transport?.message ? <div className="hint">{transport.message}</div> : null}

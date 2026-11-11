@@ -6,6 +6,7 @@ import type {
   NetworkTransport,
   NetworkView,
   PeerStatus,
+  ServiceState,
   TransferProgress,
 } from "../bindings/alceacore.ru/alceamesh";
 
@@ -16,6 +17,7 @@ export type {
   NetworkTransport,
   NetworkView,
   PeerStatus,
+  ServiceState,
   TransferProgress,
 };
 
@@ -32,6 +34,8 @@ export const mesh = {
   setAutostart: (enabled: boolean): Promise<void> => MetaService.SetAutostart(enabled),
   tray: (): Promise<boolean> => MetaService.Tray(),
   hideToTray: (): Promise<void> => MetaService.HideToTray(),
+  startService: (asAdmin: boolean): Promise<ServiceState> => MetaService.StartService(asAdmin),
+  serviceRunning: (): Promise<boolean> => MetaService.ServiceRunning(),
 
   status: (): Promise<ConnectionStatus> => TunnelService.Status(),
   connect: (): Promise<void> => TunnelService.Connect(),
