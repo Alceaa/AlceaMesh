@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { mesh, messageOf } from "../api";
 import type { ConnectionStatus, NetworkTransport, NetworkView } from "../api";
-import { Card } from "../components";
+import { Card, Switch } from "../components";
 import type { Notify } from "../components";
 
 type Props = {
@@ -15,7 +15,45 @@ type Props = {
 export default function SettingsView({ status, network, transport, onRefresh, onNotify }: Props) {
   const [name, setName] = useState(network?.identity.name ?? "");
   const [limit, setLimit] = useState("0");
+  const [autostart, setAutostart] = useState(false);
+  const [tray, setTray] = useState(false);
+  const [version, setVersion] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [enabled, trayReady, build] = await Promise.all([
+          mesh.autostart(),
+          mesh.tray(),
+          mesh.version(),
+        ]);
+        setAutostart(enabled);
+        setTray(trayReady);
+        setVersion(build);
+      } catch {
+        setTray(false);
+      }
+    })();
+  }, []);
+
+  const toggleAutostart = async (next: boolean) => {
+    try {
+      await mesh.setAutostart(next);
+      setAutostart(await mesh.autostart());
+      onNotify("ok", "Автозапуск", next ? "AlceaMesh запустится при входе в систему" : "Автозапуск отключён");
+    } catch (error) {
+      onNotify("error", "Автозапуск", messageOf(error));
+    }
+  };
+
+  const hideToTray = async () => {
+    try {
+      await mesh.hideToTray();
+    } catch (error) {
+      onNotify("error", "Трей", messageOf(error));
+    }
+  };
 
   const identityName = network?.identity.name ?? "";
   useEffect(() => {
@@ -196,6 +234,28 @@ export default function SettingsView({ status, network, transport, onRefresh, on
             Импортировать .conf…
           </button>
         )}
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Система</h2>
+          <span className="spacer" />
+          <span className="hint mono">{version}</span>
+        </div>
+        <Card>
+          <div className="switch-row">
+            <div className="text">
+              <span className="title">Запускать при входе в систему</span>
+              <span className="hint">Приложение откроется свёрнутым, значок — в трее</span>
+            </div>
+            <Switch checked={autostart} onToggle={(next) => void toggleAutostart(next)} />
+          </div>
+        </Card>
+        {tray ? (
+          <button className="btn" onClick={() => void hideToTray()}>
+            Свернуть в трей
+          </button>
+        ) : null}
       </section>
     </>
   );

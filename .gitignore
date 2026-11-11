@@ -1,5 +1,8 @@
 /bin/
+/dist/
+/docs/
 *.exe
+*.syso
 *.test
 *.out
 *.err
@@ -12,4 +15,11 @@ PROJECT_MAP.md
 frontend/node_modules
 frontend/dist/*
 !frontend/dist/.gitkeep
+
+# Полезная нагрузка установщика (собирается scripts/build-installer.ps1)
+/cmd/alceamesh-setup/payload/*
+!/cmd/alceamesh-setup/payload/placeholder.txt
+
+# PowerShell
+*.ps1:Zone.Identifier
 

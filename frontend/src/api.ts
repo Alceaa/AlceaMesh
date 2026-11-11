@@ -28,6 +28,10 @@ export function messageOf(error: unknown): string {
 export const mesh = {
   version: (): Promise<string> => MetaService.Version(),
   coordinator: (): Promise<string> => MetaService.Coordinator(),
+  autostart: (): Promise<boolean> => MetaService.Autostart(),
+  setAutostart: (enabled: boolean): Promise<void> => MetaService.SetAutostart(enabled),
+  tray: (): Promise<boolean> => MetaService.Tray(),
+  hideToTray: (): Promise<void> => MetaService.HideToTray(),
 
   status: (): Promise<ConnectionStatus> => TunnelService.Status(),
   connect: (): Promise<void> => TunnelService.Connect(),

@@ -5,8 +5,24 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
+export function Autostart(): $CancellablePromise<boolean> {
+    return $Call.ByID(536645873);
+}
+
 export function Coordinator(): $CancellablePromise<string> {
     return $Call.ByID(394273066);
+}
+
+export function HideToTray(): $CancellablePromise<void> {
+    return $Call.ByID(1619286437);
+}
+
+export function SetAutostart(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3070388057, enabled);
+}
+
+export function Tray(): $CancellablePromise<boolean> {
+    return $Call.ByID(1811844372);
 }
 
 export function Version(): $CancellablePromise<string> {

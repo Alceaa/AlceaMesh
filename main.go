@@ -10,12 +10,17 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const appVersion = "0.7.0-m7"
+const appVersion = "0.8.0-m8"
 
 var appInstance *application.App
 
 func main() {
 	peerService := NewPeerService()
+
+	startState := application.WindowStateNormal
+	if trayRequested() {
+		startState = application.WindowStateMinimised
+	}
 
 	appInstance = application.New(application.Options{
 		Name:        "AlceaMesh",
@@ -37,18 +42,21 @@ func main() {
 		},
 	})
 
-	appInstance.Window.NewWithOptions(application.WebviewWindowOptions{
+	window := appInstance.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "AlceaMesh",
 		Width:            520,
 		Height:           820,
 		MinWidth:         440,
 		MinHeight:        620,
+		StartState:       startState,
 		BackgroundColour: application.NewRGB(5, 5, 6),
 		URL:              "/",
 		Windows: application.WindowsWindow{
 			Theme: application.Dark,
 		},
 	})
+
+	setupTray(window)
 
 	if err := appInstance.Run(); err != nil {
 		log.Fatal(err)

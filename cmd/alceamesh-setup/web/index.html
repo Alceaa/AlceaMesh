@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Установка AlceaMesh</title>
+    <style>
+      :root {
+        --bg: #0b0b0d;
+        --panel: #15141a;
+        --panel-2: #1c1a22;
+        --border: #2c2833;
+        --text: #ece7df;
+        --muted: #9a938a;
+        --amber: #e2b053;
+        --ok: #7fc08a;
+        --danger: #e08a6a;
+        --radius: 12px;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: radial-gradient(120% 90% at 50% 0%, #17161c 0%, var(--bg) 60%);
+        color: var(--text);
+        font: 14px/1.5 "Segoe UI", Manrope, system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+      header { display: flex; align-items: center; gap: 12px; padding: 22px 26px 14px; }
+      header .mark { width: 42px; height: 42px; flex: none; }
+      header h1 { font-size: 19px; margin: 0; font-weight: 650; letter-spacing: 0.2px; }
+      header .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+      header .badge {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--amber);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 4px 10px;
+      }
+      main { padding: 0 26px 8px; flex: 1; overflow: auto; }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px 18px;
+        margin-bottom: 14px;
+      }
+      .card h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: var(--muted);
+        margin: 0 0 12px;
+        font-weight: 600;
+      }
+      .row { display: flex; gap: 10px; align-items: center; }
+      .row + .row { margin-top: 10px; }
+      input[type="text"] {
+        flex: 1;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font: inherit;
+      }
+      input[type="text"]:focus { outline: 1px solid var(--amber); }
+      button {
+        font: inherit;
+        color: var(--text);
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 9px 14px;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--amber); }
+      button.primary { background: var(--amber); color: #1a1408; border-color: var(--amber); font-weight: 600; }
+      button.primary:hover { filter: brightness(1.06); }
+      button.danger { border-color: #6b4034; color: var(--danger); }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .switch { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+      .switch + .switch { border-top: 1px solid var(--border); }
+      .switch .text { flex: 1; }
+      .switch .title { display: block; }
+      .switch .hint { display: block; color: var(--muted); font-size: 12.5px; }
+      .toggle {
+        width: 44px;
+        height: 24px;
+        border-radius: 999px;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        position: relative;
+        flex: none;
+        cursor: pointer;
+      }
+      .toggle::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--muted);
+        transition: 120ms;
+      }
+      .toggle[aria-checked="true"] { background: #2c2418; border-color: var(--amber); }
+      .toggle[aria-checked="true"]::after { left: 22px; background: var(--amber); }
+      ul.plan { margin: 0; padding-left: 18px; color: var(--muted); }
+      ul.plan li { margin: 4px 0; }
+      .note { color: var(--muted); font-size: 12.5px; }
+      .warn { color: var(--amber); }
+      pre.log {
+        background: #0e0d12;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        max-height: 160px;
+        overflow: auto;
+        font: 12px/1.5 "Cascadia Mono", Consolas, monospace;
+        white-space: pre-wrap;
+        margin: 0;
+      }
+      footer {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 14px 26px 20px;
+        border-top: 1px solid var(--border);
+        background: #0d0c11;
+      }
+      footer .spacer { flex: 1; }
+      .status { font-size: 13px; color: var(--muted); }
+      .status.ok { color: var(--ok); }
+      .status.error { color: var(--danger); }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#e2b053" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="6" cy="6.4" r="2.4" />
+        <circle cx="18" cy="6.4" r="2.4" />
+        <circle cx="12" cy="17.8" r="2.4" />
+        <path d="M8.2 7.4 10.3 15.6" />
+        <path d="M15.8 7.4 13.7 15.6" />
+        <path d="M8.4 6.4h7.2" />
+      </svg>
+      <div>
+        <h1 id="title">Установка AlceaMesh</h1>
+        <div class="sub" id="subtitle">Передача файлов и VPN для своей сети</div>
+      </div>
+      <span class="badge" id="version">—</span>
+    </header>
+
+    <main>
+      <div class="card hidden" id="admin-card">
+        <h2>Нужны права администратора</h2>
+        <div class="note">
+          Установка ставит службу AlceaMesh и правила брандмауэра, поэтому Windows попросит подтверждение. Нажмите
+          кнопку — откроется это же окно с правами администратора.
+        </div>
+        <div class="row" style="margin-top: 12px">
+          <button class="primary" id="elevate">Продолжить с правами администратора</button>
+        </div>
+      </div>
+
+      <div class="card" id="install-card">
+        <h2>Папка установки</h2>
+        <div class="row">
+          <input type="text" id="dir" spellcheck="false" />
+          <button id="browse">Обзор…</button>
+        </div>
+        <div class="switch">
+          <div class="text">
+            <span class="title">Запускать при входе в систему</span>
+            <span class="hint">Приложение откроется свёрнутым, значок — в трее</span>
+          </div>
+          <div class="toggle" id="autostart" role="switch" aria-checked="false" tabindex="0"></div>
+        </div>
+        <div class="switch">
+          <div class="text">
+            <span class="title">Создать ярлыки</span>
+            <span class="hint">В меню «Пуск» и на рабочем столе</span>
+          </div>
+          <div class="toggle" id="shortcuts" role="switch" aria-checked="true" tabindex="0"></div>
+        </div>
+        <div class="switch">
+          <div class="text">
+            <span class="title">Удалить настройки при удалении</span>
+            <span class="hint">Сотрёт настройки и импортированный .conf</span>
+          </div>
+          <div class="toggle" id="purge" role="switch" aria-checked="false" tabindex="0"></div>
+        </div>
+        <div class="note" style="margin-top: 12px">
+          Служба AlceaMesh и правила брандмауэра ставятся всегда: без них не работает VPN и приём файлов.
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Что будет сделано</h2>
+        <ul class="plan" id="plan"></ul>
+        <div class="note" id="payload"></div>
+      </div>
+
+      <div class="card hidden" id="log-card">
+        <h2>Ход установки</h2>
+        <pre class="log" id="log"></pre>
+      </div>
+    </main>
+
+    <footer>
+      <span class="status" id="status"></span>
+      <span class="spacer"></span>
+      <button id="dry">Проверить план</button>
+      <button id="close">Закрыть</button>
+      <button class="primary" id="run">Установить</button>
+    </footer>
+    <script>
+      const state = { data: null, timer: null, finished: false };
+      const $ = (id) => document.getElementById(id);
+
+      async function api(path) {
+        const response = await fetch(path, { cache: "no-store" });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      }
+
+      function flip(id) {
+        const element = $(id);
+        const next = element.getAttribute("aria-checked") !== "true";
+        element.setAttribute("aria-checked", next ? "true" : "false");
+      }
+
+      function flag(id) {
+        return $(id).getAttribute("aria-checked") === "true" ? "1" : "0";
+      }
+
+      function options(dryRun) {
+        return new URLSearchParams({
+          dir: $("dir").value.trim(),
+          autostart: flag("autostart"),
+          shortcuts: flag("shortcuts"),
+          service: "1",
+          firewall: "1",
+          purge: flag("purge"),
+          dryrun: dryRun ? "1" : "0",
+        }).toString();
+      }
+
+      function setStatus(text, kind) {
+        $("status").textContent = text;
+        $("status").className = kind ? "status " + kind : "status";
+      }
+
+      function setBusy(busy) {
+        $("run").disabled = busy;
+        $("dry").disabled = busy;
+        $("browse").disabled = busy;
+      }
+
+      async function loadState(preview) {
+        const data = await api("/api/state" + (preview ? "?" + options(false) : ""));
+        state.data = data;
+        $("version").textContent = data.version;
+        $("dir").value = data.dir;
+        $("autostart").setAttribute("aria-checked", data.autostart ? "true" : "false");
+        $("shortcuts").setAttribute("aria-checked", data.shortcuts ? "true" : "false");
+        $("purge").setAttribute("aria-checked", data.purge ? "true" : "false");
+
+        const uninstall = data.mode === "uninstall";
+        $("title").textContent = uninstall ? "Удаление AlceaMesh" : "Установка AlceaMesh";
+        $("subtitle").textContent = uninstall
+          ? "Уберу файлы, службу, ярлыки и правила брандмауэра"
+          : "Передача файлов и VPN для своей сети";
+        $("run").textContent = uninstall ? "Удалить" : "Установить";
+        $("run").className = uninstall ? "danger" : "primary";
+        $("dry").classList.add("hidden");
+        $("purge").parentElement.classList.toggle("hidden", !uninstall);
+        $("admin-card").classList.toggle("hidden", data.elevated || uninstall);
+
+        $("plan").innerHTML = data.plan.map((line) => "<li>" + line + "</li>").join("");
+        if (data.payload.length === 0) {
+          $("payload").className = "note warn";
+          $("payload").textContent =
+            "В установщике нет файлов программы — соберите его через scripts\\build-installer.ps1.";
+        } else {
+          $("payload").className = "note";
+          $("payload").textContent =
+            "В установщике: " +
+            data.payload.map((file) => file.name + " (" + (file.size / 1048576).toFixed(1) + " МБ)").join(", ");
+        }
+        if (data.installed) {
+          setStatus("AlceaMesh уже установлен в этой папке — установка обновит файлы.");
+        }
+      }
+      function poll() {
+        state.timer = window.setInterval(async () => {
+          let log = null;
+          try {
+            log = await api("/api/log");
+          } catch (error) {
+            window.clearInterval(state.timer);
+            state.timer = null;
+            setBusy(false);
+            setStatus("Не удалось прочитать журнал: " + error.message, "error");
+            return;
+          }
+          $("log-card").classList.remove("hidden");
+          $("log").textContent = log.lines.join("\n");
+          $("log").scrollTop = $("log").scrollHeight;
+          if (log.running) {
+            return;
+          }
+          window.clearInterval(state.timer);
+          state.timer = null;
+          setBusy(false);
+          if (log.error) {
+            setStatus(log.error, "error");
+            return;
+          }
+          if (!log.done) {
+            return;
+          }
+          state.finished = true;
+          if (state.data.mode === "uninstall") {
+            setStatus("AlceaMesh удалён.", "ok");
+            $("run").disabled = true;
+            return;
+          }
+          setStatus("Готово — AlceaMesh установлен.", "ok");
+          $("run").textContent = "Запустить AlceaMesh";
+          $("run").dataset.action = "launch";
+        }, 400);
+      }
+
+      async function start(dryRun) {
+        setBusy(true);
+        setStatus(dryRun ? "Проверяю план…" : "Работаю…");
+        $("log").textContent = "";
+        $("log-card").classList.remove("hidden");
+        try {
+          const result = await api("/api/start?" + options(dryRun));
+          if (!result.started) {
+            setBusy(false);
+            setStatus(result.error || "Не удалось начать.", "error");
+            return;
+          }
+          poll();
+        } catch (error) {
+          setBusy(false);
+          setStatus(error.message, "error");
+        }
+      }
+
+      async function refresh() {
+        try {
+          await loadState(true);
+        } catch (error) {
+          setStatus("Не удалось обновить план: " + error.message, "error");
+        }
+      }
+
+      $("run").addEventListener("click", async () => {
+        if ($("run").dataset.action === "launch") {
+          const result = await api("/api/launch");
+          setStatus(result.error || "AlceaMesh запущен.", result.error ? "error" : "ok");
+          return;
+        }
+        await start(false);
+      });
+      $("dry").addEventListener("click", () => start(true));
+      $("close").addEventListener("click", () => api("/api/close"));
+      $("dir").addEventListener("change", () => refresh());
+      $("browse").addEventListener("click", async () => {
+        const result = await api("/api/choose-dir");
+        if (result.dir) {
+          $("dir").value = result.dir;
+          await refresh();
+        } else if (result.error) {
+          setStatus(result.error, "error");
+        }
+      });
+      $("elevate").addEventListener("click", async () => {
+        const result = await api("/api/elevate");
+        if (result.error) {
+          setStatus(result.error, "error");
+          return;
+        }
+        setStatus("Открываю окно с правами администратора…", "ok");
+      });
+      for (const id of ["autostart", "shortcuts", "purge"]) {
+        $(id).addEventListener("click", () => {
+          flip(id);
+          void refresh();
+        });
+        $(id).addEventListener("keydown", (event) => {
+          if (event.key === " " || event.key === "Enter") {
+            event.preventDefault();
+            flip(id);
+            void refresh();
+          }
+        });
+      }
+
+      loadState().catch((error) =>
+        setStatus("Не удалось получить состояние установки: " + error.message, "error"),
+      );
+    </script>
+  </body>
+</html>
