@@ -94,11 +94,9 @@ export default function HomeView({
       }
     };
     const timer = window.setTimeout(() => void check(), 15000);
-    const interval = window.setInterval(() => void check(), 60 * 60 * 1000);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
-      window.clearInterval(interval);
     };
   }, []);
 
