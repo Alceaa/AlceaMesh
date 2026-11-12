@@ -65,7 +65,7 @@ func (s *DeviceService) Network() (NetworkView, error) {
 		Name:      view.Identity.Name,
 		MeshIP:    view.Identity.MeshIP,
 		Platform:  view.Identity.Platform,
-		Available: stored.AcceptFiles,
+		Available: stored.AcceptFiles && vpnRunning(stored),
 	})
 	if err != nil {
 		view.Message = friendlyText(err, fallbackNetwork)
@@ -80,7 +80,7 @@ func (s *DeviceService) Network() (NetworkView, error) {
 	}
 	for _, peer := range peers {
 		isSelf := peer.ID == self.ID
-		if !peer.Available && !isSelf {
+		if !visibleDevice(peer, isSelf) {
 			continue
 		}
 		view.Devices = append(view.Devices, deviceView(peer, isSelf))
@@ -88,6 +88,20 @@ func (s *DeviceService) Network() (NetworkView, error) {
 	sortDevices(view.Devices)
 	rememberDevices(view.Devices)
 	return view, nil
+}
+
+func visibleDevice(peer coordinator.DeviceView, self bool) bool {
+	if self {
+		return true
+	}
+	return peer.Available && peer.Online
+}
+
+func vpnRunning(stored *settings.Settings) bool {
+	if stored == nil || strings.TrimSpace(stored.ConfigText) == "" {
+		return false
+	}
+	return tunnelRunning(displayName(stored))
 }
 
 func (s *DeviceService) SetAccept(accept bool) error {
