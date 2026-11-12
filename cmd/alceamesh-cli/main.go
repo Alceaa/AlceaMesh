@@ -15,7 +15,7 @@ import (
 	"alceacore.ru/alceamesh/internal/wgconf"
 )
 
-const version = "1.0.0"
+const version = "1.0.1"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
