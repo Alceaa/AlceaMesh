@@ -10,7 +10,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const appVersion = "1.0.0"
+const appVersion = "1.0.1"
 
 var (
 	appInstance    *application.App
@@ -32,6 +32,12 @@ func main() {
 		},
 		OnShutdown: func() {
 			peerService.Shutdown()
+		},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "ru.alceacore.alceamesh",
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+				showMainWindow()
+			},
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

@@ -68,6 +68,7 @@ func showMainWindow() {
 	if mainWindow == nil {
 		mainWindow = newMainWindow()
 	}
+	mainWindow.Restore()
 	mainWindow.Show()
 	mainWindow.Focus()
 }
