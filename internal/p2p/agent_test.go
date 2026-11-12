@@ -215,3 +215,164 @@ func TestSessionFallsBackToRelay(t *testing.T) {
 		t.Errorf("state = %q, want relay", got)
 	}
 }
+
+func TestSessionFallsBackToRelayWithoutPackets(t *testing.T) {
+	s := newSession(Peer{PublicKey: "bob", Name: "Bob"}, true, token{})
+	s.addCandidates([]netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:9")})
+
+	if got := s.status().State; got != StateProbing {
+		t.Fatalf("state = %q, want probing", got)
+	}
+
+	s.mu.Lock()
+	s.startedAt = time.Now().Add(-2 * dialTimeout)
+	s.mu.Unlock()
+
+	if !s.expire() {
+		t.Fatal("a silent session must give up on the direct path")
+	}
+
+	status := s.status()
+	if status.State != StateRelay {
+		t.Errorf("state = %q, want relay", status.State)
+	}
+	if status.Message == "" {
+		t.Error("the relay fallback must explain itself")
+	}
+	if s.expire() {
+		t.Error("the session must not report the same deadline twice")
+	}
+}
+
+func TestRelaySessionRetriesPunchWindows(t *testing.T) {
+	s := newSession(Peer{PublicKey: "bob", Name: "Bob"}, true, token{})
+	s.addCandidates([]netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:9")})
+
+	s.mu.Lock()
+	s.startedAt = time.Now().Add(-2 * dialTimeout)
+	s.punchUntil = time.Now().Add(-time.Second)
+	s.nextPunch = time.Now().Add(-time.Second)
+	s.mu.Unlock()
+	if !s.expire() {
+		t.Fatal("a silent session must fall back to relay")
+	}
+
+	if _, _, ok := s.outgoing(); !ok {
+		t.Fatal("a relay session must retry the direct path")
+	}
+	if _, _, ok := s.outgoing(); !ok {
+		t.Error("punches must repeat while the window is open")
+	}
+
+	s.mu.Lock()
+	s.punchUntil = time.Now().Add(-time.Second)
+	s.mu.Unlock()
+	if _, _, ok := s.outgoing(); ok {
+		t.Error("the retry must wait for the interval after a failed window")
+	}
+
+	s.mu.Lock()
+	s.nextPunch = time.Now().Add(-time.Second)
+	s.mu.Unlock()
+	if _, _, ok := s.outgoing(); !ok {
+		t.Error("a new punch window must open after the interval")
+	}
+}
+
+func TestFirstPunchWindowEndsAtTheDeadline(t *testing.T) {
+	s := newSession(Peer{PublicKey: "bob", Name: "Bob"}, true, token{})
+	s.addCandidates([]netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:9")})
+
+	s.mu.Lock()
+	windowEnds := s.punchUntil
+	retryAt := s.nextPunch
+	s.mu.Unlock()
+
+	if left := time.Until(windowEnds); left < dialTimeout-time.Second || left > dialTimeout+time.Second {
+		t.Errorf("the first punch window lasts %s, want about %s", left, dialTimeout)
+	}
+	if !retryAt.After(windowEnds) {
+		t.Error("the first retry must start after the punch window")
+	}
+	if _, _, ok := s.outgoing(); !ok {
+		t.Error("the first punch must go out right away")
+	}
+}
+
+func TestAgentTickMovesSilentSessionToRelay(t *testing.T) {
+	stunServer := startFakeSTUN(t)
+	box := newSignalBox()
+
+	agent := NewAgent(Config{
+		PublicKey:  "alice",
+		Name:       "Alice",
+		STUNServer: stunServer,
+		Signaler:   boxClient{box: box, me: "alice"},
+	})
+	if err := agent.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer agent.Close()
+
+	if err := agent.Connect(Peer{PublicKey: "bob", Name: "Bob", MeshIP: "100.64.0.3"}); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if got := stateOf(agent, "bob"); got != StateProbing {
+		t.Fatalf("state = %q, want probing", got)
+	}
+
+	s := agent.session("bob")
+	s.addCandidates([]netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:9")})
+	s.mu.Lock()
+	s.startedAt = time.Now().Add(-2 * dialTimeout)
+	s.punchUntil = time.Now().Add(-time.Second)
+	s.nextPunch = time.Now().Add(-time.Second)
+	s.mu.Unlock()
+
+	agent.tick()
+
+	if got := stateOf(agent, "bob"); got != StateRelay {
+		t.Errorf("state = %q, want relay", got)
+	}
+}
+
+func TestStunServersPreferTheConfiguredServer(t *testing.T) {
+	agent := NewAgent(Config{PublicKey: "alice", STUNServer: "127.0.0.1:3478"})
+	servers := agent.stunServers()
+	if len(servers) == 0 || servers[0] != "127.0.0.1:3478" {
+		t.Fatalf("the configured server must come first, got %v", servers)
+	}
+
+	seen := make(map[string]bool, len(servers))
+	for _, server := range servers {
+		if seen[server] {
+			t.Errorf("server %q is listed twice", server)
+		}
+		seen[server] = true
+	}
+
+	fallback := NewAgent(Config{PublicKey: "alice"}).stunServers()
+	if len(fallback) != len(stunFallbacks) {
+		t.Errorf("without a configured server the fallbacks must be used, got %v", fallback)
+	}
+}
+
+func TestLocalCandidateStrings(t *testing.T) {
+	if got := localCandidateStrings(0); len(got) != 0 {
+		t.Errorf("a missing port must yield no candidates, got %v", got)
+	}
+
+	for _, value := range localCandidateStrings(41234) {
+		addr, err := netip.ParseAddrPort(value)
+		if err != nil {
+			t.Errorf("candidate %q: %v", value, err)
+			continue
+		}
+		if addr.Port() != 41234 {
+			t.Errorf("candidate %q carries the wrong port", value)
+		}
+		if !addr.Addr().Is4() || addr.Addr().IsLoopback() {
+			t.Errorf("candidate %q must be a routable IPv4 address", value)
+		}
+	}
+}

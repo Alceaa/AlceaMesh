@@ -21,6 +21,12 @@ const (
 	signalTimeout     = 5 * time.Second
 )
 
+var stunFallbacks = []string{
+	defaultSTUNServer,
+	"stun.cloudflare.com:3478",
+	"stun.nextcloud.com:443",
+}
+
 type Signal struct {
 	From       string   `json:"from"`
 	Kind       string   `json:"kind"`
@@ -256,10 +262,63 @@ func (a *Agent) isClosed() bool {
 
 func (a *Agent) candidateStrings() []string {
 	public := a.PublicAddr()
-	if !public.IsValid() {
+	out := make([]string, 0, maxCandidates)
+	if public.IsValid() {
+		out = append(out, public.String())
+	}
+	for _, local := range localCandidateStrings(a.localPort()) {
+		if len(out) == maxCandidates {
+			break
+		}
+		out = append(out, local)
+	}
+	return out
+}
+
+func (a *Agent) localPort() int {
+	addr, ok := a.localAddr().(*net.UDPAddr)
+	if !ok {
+		return 0
+	}
+	return addr.Port
+}
+
+func localCandidateStrings(port int) []string {
+	if port <= 0 || port > 65535 {
 		return nil
 	}
-	return []string{public.String()}
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+
+	out := make([]string, 0, 4)
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip, ok := netip.AddrFromSlice(ipNet.IP)
+			if !ok {
+				continue
+			}
+			ip = ip.Unmap()
+			if !ip.Is4() || !ip.IsGlobalUnicast() {
+				continue
+			}
+			out = append(out, netip.AddrPortFrom(ip, uint16(port)).String())
+		}
+	}
+	return out
 }
 
 func parseCandidates(values []string) []netip.AddrPort {

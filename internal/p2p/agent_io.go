@@ -95,7 +95,33 @@ func (a *Agent) deliverStunResponse(id transactionID, data []byte) {
 }
 
 func (a *Agent) discover() error {
-	server, err := resolveUDP(a.cfg.STUNServer)
+	var lastErr error
+	for _, server := range a.stunServers() {
+		if err := a.discoverFrom(server); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+func (a *Agent) stunServers() []string {
+	servers := make([]string, 0, len(stunFallbacks)+1)
+	if a.cfg.STUNServer != "" {
+		servers = append(servers, a.cfg.STUNServer)
+	}
+	for _, server := range stunFallbacks {
+		if server == a.cfg.STUNServer {
+			continue
+		}
+		servers = append(servers, server)
+	}
+	return servers
+}
+
+func (a *Agent) discoverFrom(server string) error {
+	addr, err := resolveUDP(server)
 	if err != nil {
 		return err
 	}
@@ -112,20 +138,20 @@ func (a *Agent) discover() error {
 		a.waiting[id] = waiter
 		a.mu.Unlock()
 
-		if _, err := a.conn.WriteToUDP(buildBindingRequest(id), server); err != nil {
+		if _, err := a.conn.WriteToUDP(buildBindingRequest(id), addr); err != nil {
 			a.forgetWaiter(id)
 			return err
 		}
 
 		select {
-		case addr := <-waiter:
+		case public := <-waiter:
 			a.mu.Lock()
-			a.public = addr
+			a.public = public
 			a.mu.Unlock()
 			return nil
 		case <-time.After(stunAttemptInterval):
 			a.forgetWaiter(id)
-			lastErr = fmt.Errorf("p2p: no stun response from %s", a.cfg.STUNServer)
+			lastErr = fmt.Errorf("p2p: no stun response from %s", server)
 		case <-a.closeCh:
 			a.forgetWaiter(id)
 			return errors.New("p2p: agent closed")
@@ -223,6 +249,7 @@ func (a *Agent) punchLoop() {
 
 func (a *Agent) tick() {
 	for _, s := range a.snapshot() {
+		s.expire()
 		if payload, targets, ok := s.outgoing(); ok {
 			a.sendTo(payload, targets)
 			continue
@@ -230,7 +257,6 @@ func (a *Agent) tick() {
 		if payload, targets := s.keepalive(); payload != nil {
 			a.sendTo(payload, targets)
 		}
-		s.expire()
 	}
 }
 

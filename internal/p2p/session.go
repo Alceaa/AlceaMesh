@@ -10,8 +10,13 @@ const (
 	punchInterval     = 250 * time.Millisecond
 	keepaliveInterval = 15 * time.Second
 	dialTimeout       = 8 * time.Second
+	retryInterval     = 45 * time.Second
 	deadAfter         = 45 * time.Second
 	maxCandidates     = 8
+
+	relayMessage     = "direct path unavailable, using the Alcea hub"
+	timeoutMessage   = "direct path timed out"
+	closedByPeerText = "peer closed the connection"
 )
 
 type Peer struct {
@@ -58,16 +63,22 @@ type session struct {
 	peerAddr netip.AddrPort
 	data     *dataConn
 
+	punchUntil time.Time
+	nextPunch  time.Time
+
 	startedAt time.Time
 }
 
 func newSession(peer Peer, initiator bool, tok token) *session {
+	now := time.Now()
 	return &session{
-		peer:      peer,
-		initiator: initiator,
-		token:     tok,
-		state:     StateProbing,
-		startedAt: time.Now(),
+		peer:       peer,
+		initiator:  initiator,
+		token:      tok,
+		state:      StateProbing,
+		punchUntil: now.Add(dialTimeout),
+		nextPunch:  now.Add(dialTimeout + retryInterval),
+		startedAt:  now,
 	}
 }
 
@@ -105,13 +116,20 @@ func (s *session) outgoing() ([]byte, []netip.AddrPort, bool) {
 	if s.state == StateDirect {
 		return nil, nil, false
 	}
-	if time.Since(s.startedAt) > dialTimeout {
-		return nil, nil, false
-	}
 	if len(s.remote) == 0 {
 		return nil, nil, false
 	}
-	s.sentAt = time.Now()
+
+	now := time.Now()
+	if !now.Before(s.punchUntil) {
+		if now.Before(s.nextPunch) {
+			return nil, nil, false
+		}
+		s.punchUntil = now.Add(dialTimeout)
+		s.nextPunch = now.Add(retryInterval)
+	}
+
+	s.sentAt = now
 	return encodePacket(packet{kind: packetPunch, token: s.token}), s.candidatesLocked(), true
 }
 
@@ -166,7 +184,7 @@ func (s *session) handle(data []byte, from netip.AddrPort) []byte {
 
 	case packetBye:
 		s.state = StateIdle
-		s.message = "peer closed the connection"
+		s.message = closedByPeerText
 	}
 	return nil
 }
@@ -182,23 +200,33 @@ func (s *session) refreshState() {
 	}
 	if time.Since(s.startedAt) > dialTimeout {
 		s.state = StateRelay
-		s.message = "direct path unavailable, using the Alcea hub"
+		s.message = relayMessage
 	}
 }
 
 func (s *session) expire() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != StateDirect || s.lastSeen.IsZero() {
-		return false
-	}
-	if time.Since(s.lastSeen) > deadAfter {
-		s.state = StateRelay
-		s.message = "direct path timed out"
-		s.sawPunch = false
-		s.sawAck = false
-		s.startedAt = time.Now()
-		return true
+
+	switch s.state {
+	case StateProbing:
+		if time.Since(s.startedAt) > dialTimeout {
+			s.state = StateRelay
+			s.message = relayMessage
+			return true
+		}
+	case StateDirect:
+		if s.lastSeen.IsZero() {
+			return false
+		}
+		if time.Since(s.lastSeen) > deadAfter {
+			s.state = StateRelay
+			s.message = timeoutMessage
+			s.sawPunch = false
+			s.sawAck = false
+			s.startedAt = time.Now()
+			return true
+		}
 	}
 	return false
 }
