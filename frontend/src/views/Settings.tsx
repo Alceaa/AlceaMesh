@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { mesh, messageOf } from "../api";
-import type { ConnectionStatus, NetworkTransport, NetworkView } from "../api";
+import type { ConnectionStatus, NetworkTransport, NetworkView, UpdateState } from "../api";
 import { Card, Switch } from "../components";
 import type { Notify } from "../components";
 
@@ -18,6 +18,7 @@ export default function SettingsView({ status, network, transport, onRefresh, on
   const [autostart, setAutostart] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [updateSource, setUpdateSource] = useState("");
+  const [available, setAvailable] = useState<UpdateState | null>(null);
   const [tray, setTray] = useState(false);
   const [version, setVersion] = useState("");
   const [saving, setSaving] = useState(false);
@@ -70,6 +71,7 @@ export default function SettingsView({ status, network, transport, onRefresh, on
   const checkUpdates = async () => {
     try {
       const state = await mesh.updateCheck();
+      setAvailable(state.available ? state : null);
       if (state.available) {
         onNotify("ok", "Обновления", `Доступна версия ${state.latest}`);
         return;
@@ -77,6 +79,15 @@ export default function SettingsView({ status, network, transport, onRefresh, on
       onNotify("ok", "Обновления", state.message || "Установлена последняя версия");
     } catch (error) {
       onNotify("error", "Обновления", messageOf(error));
+    }
+  };
+
+  const installUpdate = async () => {
+    try {
+      const message = await mesh.installUpdate();
+      onNotify("ok", "Обновление", message);
+    } catch (error) {
+      onNotify("error", "Обновление", messageOf(error));
     }
   };
 
@@ -294,6 +305,11 @@ export default function SettingsView({ status, network, transport, onRefresh, on
         <button className="btn" onClick={() => void checkUpdates()}>
           Проверить обновления
         </button>
+        {available ? (
+          <button className="btn btn-primary" onClick={() => void installUpdate()}>
+            Обновить до {available.latest}
+          </button>
+        ) : null}
         {updateSource ? <span className="hint mono">{updateSource}</span> : null}
         {tray ? (
           <button className="btn" onClick={() => void hideToTray()}>

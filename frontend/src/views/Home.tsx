@@ -74,23 +74,41 @@ export default function HomeView({
 
   useEffect(() => {
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const state = await mesh.updateCheck();
-          if (cancelled || !state.available) return;
-          setUpdate(state);
-          if (state.auto) await mesh.installUpdate();
-        } catch {
-          setUpdate(null);
-        }
-      })();
-    }, 15000);
+    const check = async () => {
+      try {
+        const state = await mesh.updateCheck();
+        if (cancelled) return;
+        setUpdate(state.available ? state : null);
+      } catch {
+        if (!cancelled) setUpdate(null);
+      }
+    };
+    const timer = window.setTimeout(() => void check(), 15000);
+    const interval = window.setInterval(() => void check(), 60 * 60 * 1000);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    if (!update || !update.available || !update.auto) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const message = await mesh.installUpdate();
+        if (!cancelled) onNotify("ok", "Обновление", message);
+      } catch (error) {
+        if (cancelled) return;
+        setUpdate({ ...update, auto: false });
+        onNotify("error", "Обновление", messageOf(error));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [update, onNotify]);
 
   const toggleConnection = async () => {
     setPending(true);
