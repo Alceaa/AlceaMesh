@@ -39,7 +39,7 @@ func updateManifestURL() string {
 func autoUpdateEnabled() bool {
 	stored, err := settings.Load()
 	if err != nil || stored.AutoUpdate == nil {
-		return true
+		return false
 	}
 	return *stored.AutoUpdate
 }

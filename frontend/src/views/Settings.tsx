@@ -297,7 +297,7 @@ export default function SettingsView({ status, network, transport, onRefresh, on
           <div className="switch-row">
             <div className="text">
               <span className="title">Обновляться автоматически</span>
-              <span className="hint">Обновления скачиваются и устанавливаются сами</span>
+              <span className="hint">Ставить обновления сразу, без подтверждения</span>
             </div>
             <Switch checked={autoUpdate} onToggle={(next) => void toggleAutoUpdate(next)} />
           </div>

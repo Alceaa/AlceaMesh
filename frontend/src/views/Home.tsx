@@ -26,6 +26,8 @@ export default function HomeView({
   const [pending, setPending] = useState(false);
   const [service, setService] = useState<ServiceState | null>(null);
   const [update, setUpdate] = useState<UpdateState | null>(null);
+  const [dismissed, setDismissed] = useState("");
+  const [installing, setInstalling] = useState(false);
 
   const configured = status?.configured ?? false;
   const running = status?.running ?? false;
@@ -44,14 +46,22 @@ export default function HomeView({
     }
   };
 
-  const applyUpdate = async () => {
+  const startInstall = async () => {
+    setInstalling(true);
     try {
       const message = await mesh.installUpdate();
       onNotify("ok", "Обновление", message);
     } catch (error) {
+      setInstalling(false);
+      setUpdate((current) => (current ? { ...current, auto: false } : current));
       onNotify("error", "Обновление", messageOf(error));
     }
   };
+
+  useEffect(() => {
+    if (!update || !update.available || !update.auto) return;
+    void startInstall();
+  }, [update]);
 
   useEffect(() => {
     if (serviceUp) {
@@ -92,24 +102,6 @@ export default function HomeView({
     };
   }, []);
 
-  useEffect(() => {
-    if (!update || !update.available || !update.auto) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const message = await mesh.installUpdate();
-        if (!cancelled) onNotify("ok", "Обновление", message);
-      } catch (error) {
-        if (cancelled) return;
-        setUpdate({ ...update, auto: false });
-        onNotify("error", "Обновление", messageOf(error));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [update, onNotify]);
-
   const toggleConnection = async () => {
     setPending(true);
     try {
@@ -139,10 +131,10 @@ export default function HomeView({
 
   return (
     <>
-      {update?.available && !update.auto ? (
+      {update && update.available && update.latest !== dismissed ? (
         <section className="section">
           <div className="section-head">
-            <h2>Обновление версии</h2>
+            <h2>Доступно обновление</h2>
             <span className="spacer" />
             <span className="badge is-on">{update.latest}</span>
           </div>
@@ -160,10 +152,18 @@ export default function HomeView({
               ) : null}
             </div>
             <div className="card-foot">
-              <button className="btn" type="button" onClick={() => void applyUpdate()}>
-                Обновить
+              <button className="btn btn-primary" disabled={installing} onClick={() => void startInstall()}>
+                Обновить сейчас
+              </button>
+              <button className="btn" disabled={installing} onClick={() => setDismissed(update.latest)}>
+                Позже
               </button>
             </div>
+            {installing ? (
+              <div className="hint">
+                Скачиваю обновление и запускаю установщик: приложение закроется и откроется заново.
+              </div>
+            ) : null}
           </Card>
         </section>
       ) : null}
