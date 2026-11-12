@@ -10,7 +10,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const appVersion = "0.8.0-m8"
+const appVersion = "0.8.1"
 
 var (
 	appInstance    *application.App
