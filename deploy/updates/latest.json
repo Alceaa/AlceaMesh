@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "url": "https://alceacore.ru/alceamesh/AlceaMesh-Setup-1.0.0.exe",
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "size": 0,
-  "notes": "Краткое описание изменений"
+  "url": "https://github.com/Alceaa/AlceaMesh/releases/download/v1.0.0/AlceaMesh-Setup-1.0.0.exe",
+  "sha256": "CF1903624A19CBA74FDC2B430E11AE892880A10DD3985DE1B8AA071C0D23E704",
+  "size": 32756224,
+  "notes": "Первый публичный релиз: VPN-сеть, передача файлов и папок, автоматические обновления"
 }
