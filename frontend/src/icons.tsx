@@ -22,12 +22,13 @@ function Svg({ size = 20, children }: IconProps & { children: ReactNode }) {
 
 export const LogoIcon = ({ size = 26 }: IconProps) => (
   <Svg size={size}>
-    <circle cx="6" cy="6.4" r="2.4" />
-    <circle cx="18" cy="6.4" r="2.4" />
-    <circle cx="12" cy="17.8" r="2.4" />
-    <path d="M8.2 7.4 10.3 15.6" />
-    <path d="M15.8 7.4 13.7 15.6" />
-    <path d="M8.4 6.4h7.2" />
+    <circle cx="12" cy="4.6" r="2.1" />
+    <circle cx="5" cy="17.4" r="2.1" />
+    <circle cx="19" cy="17.4" r="2.1" />
+    <circle cx="12" cy="13" r="2.7" fill="currentColor" stroke="none" />
+    <path d="M12 6.7v3.6" />
+    <path d="M7.1 16.4 10 14.5" />
+    <path d="M16.9 16.4 14 14.5" />
   </Svg>
 );
 
