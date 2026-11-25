@@ -13,9 +13,8 @@ import (
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/coordinator/api"
 	"alceacore.ru/alceamesh/internal/coordinator/sqlitestore"
+	buildversion "alceacore.ru/alceamesh/internal/version"
 )
-
-const version = "1.0.1"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -32,7 +31,7 @@ func run(args []string) error {
 	command, rest := args[0], args[1:]
 	switch command {
 	case "version", "-v", "--version":
-		fmt.Printf("alceacoord %s\n", version)
+		fmt.Printf("alceacoord %s\n", buildversion.String())
 		return nil
 	case "help", "-h", "--help":
 		usage()
@@ -88,7 +87,7 @@ func cmdRun(args []string) error {
 		return err
 	}
 
-	server := &api.Server{Registry: registry, AdminKey: *adminKey, Version: version}
+	server := &api.Server{Registry: registry, AdminKey: *adminKey, Version: buildversion.String()}
 	httpServer := &http.Server{
 		Addr:              *listen,
 		Handler:           server.Handler(),
@@ -107,7 +106,7 @@ func cmdRun(args []string) error {
 		log.Println("warning: no admin key set, token management is disabled")
 	}
 	log.Printf("alceacoord %s listening on %s (db=%s, pool=%s, presence-ttl=%s)",
-		version, *listen, *dbPath, *pool, *presenceTTL)
+		buildversion.String(), *listen, *dbPath, *pool, *presenceTTL)
 
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err

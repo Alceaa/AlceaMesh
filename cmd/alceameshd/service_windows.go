@@ -11,6 +11,7 @@ import (
 
 	"alceacore.ru/alceamesh/internal/daemon"
 	"alceacore.ru/alceamesh/internal/ipc"
+	buildversion "alceacore.ru/alceamesh/internal/version"
 )
 
 const serviceName = "AlceaMesh"
@@ -34,7 +35,7 @@ func (h *serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, 
 		return true, 1
 	}
 
-	d := daemon.New(version)
+	d := daemon.New(buildversion.String())
 	server := ipc.NewServer()
 	d.Register(server)
 

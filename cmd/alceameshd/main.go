@@ -11,10 +11,9 @@ import (
 
 	"alceacore.ru/alceamesh/internal/daemon"
 	"alceacore.ru/alceamesh/internal/ipc"
+	buildversion "alceacore.ru/alceamesh/internal/version"
 	"alceacore.ru/alceamesh/internal/wgengine"
 )
-
-const version = "1.0.1"
 
 func main() {
 	if isWindowsService() {
@@ -38,7 +37,7 @@ func run(args []string) error {
 	command, rest := args[0], args[1:]
 	switch command {
 	case "version", "-v", "--version":
-		fmt.Printf("alceameshd %s\n", version)
+		fmt.Printf("alceameshd %s\n", buildversion.String())
 		return nil
 	case "help", "-h", "--help":
 		usage()
@@ -83,12 +82,12 @@ func cmdRun(args []string) error {
 	}
 	defer listener.Close()
 
-	log.Printf("alceameshd %s listening on %s", version, ipc.SocketPath())
+	log.Printf("alceameshd %s listening on %s", buildversion.String(), ipc.SocketPath())
 	return serve(listener)
 }
 
 func serve(listener net.Listener) error {
-	d := daemon.New(version)
+	d := daemon.New(buildversion.String())
 	server := ipc.NewServer()
 	d.Register(server)
 

@@ -12,10 +12,9 @@ import (
 	"alceacore.ru/alceamesh/internal/coordclient"
 	"alceacore.ru/alceamesh/internal/ipc"
 	"alceacore.ru/alceamesh/internal/naming"
+	buildversion "alceacore.ru/alceamesh/internal/version"
 	"alceacore.ru/alceamesh/internal/wgconf"
 )
-
-const version = "1.0.1"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -32,7 +31,7 @@ func run(args []string) error {
 	command, rest := args[0], args[1:]
 	switch command {
 	case "version", "-v", "--version":
-		fmt.Printf("alceamesh-cli %s\n", version)
+		fmt.Printf("alceamesh-cli %s\n", buildversion.String())
 		return nil
 	case "help", "-h", "--help":
 		usage()
