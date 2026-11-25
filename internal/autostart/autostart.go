@@ -12,16 +12,31 @@ func Command(exePath string) string {
 }
 
 func Enabled() bool {
-	command, ok, err := readValue(valueName)
-	if err != nil || !ok {
-		return false
-	}
-	return strings.TrimSpace(command) != ""
+	return enabledFor(valueName)
 }
 
 func Set(enabled bool, exePath string) error {
-	if !enabled {
-		return removeValue(valueName)
+	return set(valueName, enabled, exePath)
+}
+
+func enabledFor(name string) bool {
+	command, ok, err := readValue(name)
+	if err != nil || !ok || strings.TrimSpace(command) == "" {
+		return false
 	}
-	return writeValue(valueName, Command(exePath))
+	return !disabledBySystem(name)
+}
+
+func set(name string, enabled bool, exePath string) error {
+	if !enabled {
+		err := removeValue(name)
+		if approvalErr := removeApproval(name); err == nil {
+			err = approvalErr
+		}
+		return err
+	}
+	if err := writeValue(name, Command(exePath)); err != nil {
+		return err
+	}
+	return writeApproval(name, true)
 }
