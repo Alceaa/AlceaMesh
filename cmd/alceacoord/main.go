@@ -71,6 +71,9 @@ func cmdRun(args []string) error {
 	pool := fs.String("pool", coordinator.DefaultPool, "mesh IP pool (CIDR)")
 	presenceTTL := fs.Duration("presence-ttl", coordinator.DefaultPresenceTTL, "presence timeout")
 	legacyMode := fs.Bool("legacy-mode", true, "accept requests without a device signature (for clients older than the trust update)")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate (enables HTTPS, together with -tls-key)")
+	tlsKey := fs.String("tls-key", "", "TLS private key")
+	publicListen := fs.String("public-listen", "", "additional address for the public listener (registration, version, ping only)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -102,12 +105,17 @@ func cmdRun(args []string) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	var publicServer *http.Server
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sig
 		log.Println("shutting down")
 		_ = httpServer.Close()
+		if publicServer != nil {
+			_ = publicServer.Close()
+		}
 	}()
 
 	if *adminKey == "" {
@@ -116,9 +124,43 @@ func cmdRun(args []string) error {
 	if *legacyMode {
 		log.Println("warning: legacy mode is on — requests without a device signature are accepted (fits clients older than the trust update; turn off with -legacy-mode=false)")
 	}
-	log.Printf("alceacoord %s listening on %s (db=%s, pool=%s, presence-ttl=%s)",
-		buildversion.String(), *listen, *dbPath, *pool, *presenceTTL)
+	if (*tlsCert == "") != (*tlsKey == "") {
+		return fmt.Errorf("tls-cert and tls-key must be set together")
+	}
 
+	if *publicListen != "" {
+		publicServer = &http.Server{
+			Addr:              *publicListen,
+			Handler:           server.PublicHandler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			var err error
+			if *tlsCert != "" {
+				err = publicServer.ListenAndServeTLS(*tlsCert, *tlsKey)
+			} else {
+				err = publicServer.ListenAndServe()
+			}
+			if err != nil && err != http.ErrServerClosed {
+				log.Printf("public listener stopped: %v", err)
+			}
+		}()
+		log.Printf("alceacoord public listener on %s (регистрация, версия и ping)", *publicListen)
+	}
+
+	scheme := "http"
+	if *tlsCert != "" {
+		scheme = "https"
+	}
+	log.Printf("alceacoord %s listening on %s (%s, db=%s, pool=%s, presence-ttl=%s)",
+		buildversion.String(), *listen, scheme, *dbPath, *pool, *presenceTTL)
+
+	if *tlsCert != "" {
+		if err := httpServer.ListenAndServeTLS(*tlsCert, *tlsKey); err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	}
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

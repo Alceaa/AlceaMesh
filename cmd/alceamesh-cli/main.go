@@ -54,6 +54,8 @@ func run(args []string) error {
 		return cmdDown(rest)
 	case "coord":
 		return cmdCoord(rest)
+	case "ca":
+		return cmdCA(rest)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", command)

@@ -50,6 +50,20 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+func (s *Server) PublicHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/ping", s.handlePing)
+	mux.HandleFunc("GET /v1/version", s.handleVersion)
+	mux.HandleFunc("POST /v1/enroll", s.handleEnroll)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error":  "этот адрес доступен только из сети Alcea",
+			"reason": "not_public",
+		})
+	})
+	return mux
+}
+
 func (s *Server) handlePing(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"pong": true})
 }
