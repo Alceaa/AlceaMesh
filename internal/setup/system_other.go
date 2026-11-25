@@ -45,3 +45,9 @@ func stopRunningComponents(func(string, ...any)) bool {
 func startApp(string) error {
 	return errUnsupported
 }
+
+func InstalledDir() string {
+	return ""
+}
+
+func cleanLegacyCaches(func(string, ...any)) {}

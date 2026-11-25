@@ -20,14 +20,15 @@ const (
 )
 
 type Options struct {
-	Dir       string
-	Version   string
-	Autostart bool
-	Shortcuts bool
-	Service   bool
-	Firewall  bool
-	Purge     bool
-	DryRun    bool
+	Dir         string
+	PreviousDir string
+	Version     string
+	Autostart   bool
+	Shortcuts   bool
+	Service     bool
+	Firewall    bool
+	Purge       bool
+	DryRun      bool
 }
 
 type step struct {
@@ -45,6 +46,24 @@ func DefaultDir() string {
 		base = `C:\Program Files`
 	}
 	return filepath.Join(base, AppName)
+}
+
+func PreferredDir() string {
+	if dir := InstalledDir(); dir != "" {
+		return dir
+	}
+	return DefaultDir()
+}
+
+func DirFromExecutable(selfPath string) string {
+	if strings.TrimSpace(selfPath) == "" {
+		return ""
+	}
+	dir := filepath.Dir(filepath.Clean(selfPath))
+	if !looksLikeOurInstall(dir) {
+		return ""
+	}
+	return dir
 }
 
 func Validate(dir string) error {
@@ -73,6 +92,10 @@ func Plan(options Options) []string {
 		"Остановить приложение и службу AlceaMesh, если они запущены",
 		fmt.Sprintf("Скопировать файлы в %s", options.Dir),
 	}
+	if stale := removalCandidates(options.Dir, options.PreviousDir, DefaultDir()); len(stale) > 0 {
+		steps = append(steps, fmt.Sprintf("Удалить прежнюю копию программы из %s", strings.Join(stale, ", ")))
+	}
+	steps = append(steps, "Убрать данные, оставшиеся в системных папках от прежних версий")
 	if options.Service {
 		steps = append(steps, "Установить службу AlceaMesh (нужна для VPN) и запустить её")
 	}
@@ -100,7 +123,10 @@ func Install(payload fs.FS, selfPath string, options Options, log func(string)) 
 			log(fmt.Sprintf(format, args...))
 		}
 	}
+	report("Папка установки: %s", options.Dir)
 	appRunning := false
+
+	knownDirs := removalCandidates(options.Dir, options.PreviousDir, DefaultDir())
 
 	tasks := []step{
 		{title: "Останавливаю запущенные компоненты", run: func() error {
@@ -128,6 +154,17 @@ func Install(payload fs.FS, selfPath string, options Options, log func(string)) 
 			return copyFile(selfPath, filepath.Join(options.Dir, uninstallExe))
 		},
 	})
+
+	tasks = append(tasks,
+		step{title: "Убираю прежнюю копию программы", run: func() error {
+			removePreviousInstall(knownDirs, report)
+			return nil
+		}},
+		step{title: "Убираю старые служебные данные", run: func() error {
+			cleanLegacyCaches(report)
+			return nil
+		}},
+	)
 
 	if options.Service {
 		tasks = append(tasks, step{
@@ -199,6 +236,7 @@ func Uninstall(options Options, selfPath string, log func(string)) error {
 		}
 	}
 	dir := filepath.Clean(options.Dir)
+	report("Папка установки: %s", dir)
 
 	tasks := []step{
 		{title: "Останавливаю службу", run: func() error {
@@ -225,7 +263,7 @@ func Uninstall(options Options, selfPath string, log func(string)) error {
 
 	if options.Purge {
 		tasks = append(tasks, step{title: "Удаляю настройки", run: func() error {
-			return os.RemoveAll(settingsDir())
+			return removeDataDirs(dir, report)
 		}})
 	}
 
@@ -240,6 +278,91 @@ func Uninstall(options Options, selfPath string, log func(string)) error {
 	}
 	report("Готово.")
 	return nil
+}
+
+func previousInstall(previous, current string) string {
+	stale := strings.TrimSpace(previous)
+	if stale == "" {
+		return ""
+	}
+	stale = filepath.Clean(stale)
+	target := filepath.Clean(strings.TrimSpace(current))
+	if strings.EqualFold(stale, target) {
+		return ""
+	}
+	if within(target, stale) {
+		return ""
+	}
+	if !looksLikeOurInstall(stale) {
+		return ""
+	}
+	return stale
+}
+
+func removalCandidates(current string, previous ...string) []string {
+	var stale []string
+	for _, candidate := range previous {
+		if dir := previousInstall(candidate, current); dir != "" {
+			stale = append(stale, dir)
+		}
+	}
+	return stale
+}
+
+func within(child, parent string) bool {
+	child = strings.ToLower(filepath.Clean(child))
+	parent = strings.ToLower(filepath.Clean(parent))
+	if child == parent {
+		return true
+	}
+	return strings.HasPrefix(child, parent+string(os.PathSeparator))
+}
+
+func looksLikeOurInstall(dir string) bool {
+	for _, name := range PayloadFiles() {
+		if name == "wintun.dll" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func removePreviousInstall(stale []string, report func(string, ...any)) {
+	for _, dir := range stale {
+		report("Удаляю прежнюю копию программы из %s", dir)
+		if err := os.RemoveAll(dir); err != nil {
+			report("Не удалось удалить %s: %v", dir, err)
+		}
+	}
+}
+
+func dataDirs(dir string) []string {
+	dirs := []string{filepath.Join(filepath.Clean(dir), "data")}
+	if base := strings.TrimSpace(os.Getenv("AppData")); base != "" {
+		dirs = append(dirs, filepath.Join(base, AppName))
+	}
+	if base := strings.TrimSpace(os.Getenv("LocalAppData")); base != "" {
+		dirs = append(dirs, filepath.Join(base, AppName))
+	}
+	return dirs
+}
+
+func removeDataDirs(dir string, report func(string, ...any)) error {
+	var firstErr error
+	for _, candidate := range dataDirs(dir) {
+		info, err := os.Stat(candidate)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		report("Удаляю %s", candidate)
+		if err := os.RemoveAll(candidate); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func copyFromFS(source fs.FS, name, target string) error {

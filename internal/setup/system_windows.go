@@ -91,6 +91,51 @@ func SetAppAutostart(enabled bool, exePath string) error {
 	return autostart.Set(enabled, exePath)
 }
 
+func InstalledDir() string {
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, UninstallKey, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer key.Close()
+
+	value, _, err := key.GetStringValue("InstallLocation")
+	if err != nil {
+		return ""
+	}
+	value = strings.TrimSpace(value)
+	if value == "" || !filepath.IsAbs(value) {
+		return ""
+	}
+	if info, err := os.Stat(filepath.Join(value, "alceamesh.exe")); err != nil || info.IsDir() {
+		return ""
+	}
+	return value
+}
+
+func cleanLegacyCaches(report func(string, ...any)) {
+	base := strings.TrimSpace(os.Getenv("AppData"))
+	if base == "" {
+		return
+	}
+
+	candidates := []string{filepath.Join(base, "alceamesh.exe")}
+	if matches, err := filepath.Glob(filepath.Join(base, "AlceaMesh-Setup-*.exe")); err == nil {
+		candidates = append(candidates, matches...)
+	}
+
+	for _, path := range candidates {
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			report("Не удалось убрать %s: %v", path, err)
+			continue
+		}
+		report("Убрал %s", path)
+	}
+}
+
 const appWasRunningMarker = "ALCEAMESH-APP-WAS-RUNNING"
 
 func stopRunningComponents(report func(string, ...any)) bool {

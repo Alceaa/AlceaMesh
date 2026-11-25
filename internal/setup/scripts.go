@@ -2,11 +2,8 @@ package setup
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-
-	"alceacore.ru/alceamesh/internal/settings"
 )
 
 func quote(value string) string {
@@ -76,12 +73,4 @@ func UninstallRegistryValues(dir, version string) map[string]string {
 		"NoModify":             "1",
 		"NoRepair":             "1",
 	}
-}
-
-func settingsDir() string {
-	dir, err := settings.Dir()
-	if err != nil {
-		return filepath.Join(os.Getenv("AppData"), AppName)
-	}
-	return dir
 }

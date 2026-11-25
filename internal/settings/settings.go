@@ -4,7 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"alceacore.ru/alceamesh/internal/datadir"
 )
+
+const fileName = "settings.json"
 
 type Settings struct {
 	DeviceName     string `json:"device_name,omitempty"`
@@ -17,32 +22,54 @@ type Settings struct {
 	UpdateManifest string `json:"update_manifest,omitempty"`
 }
 
-func Dir() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, "AlceaMesh"), nil
+func Dir() string {
+	return datadir.Dir()
+}
+
+func LegacyDir() string {
+	return datadir.LegacyDir()
 }
 
 func Load() (*Settings, error) {
-	dir, err := Dir()
+	dir := datadir.Dir()
+	return loadMigrating(dir, datadir.LegacyDir(), portableTo(dir))
+}
+
+func portableTo(dir string) bool {
+	exe, err := os.Executable()
 	if err != nil {
-		return nil, err
+		return false
 	}
-	return LoadFrom(dir)
+	return strings.EqualFold(filepath.Dir(filepath.Clean(dir)), filepath.Clean(filepath.Dir(exe)))
 }
 
 func (s *Settings) Save() error {
-	dir, err := Dir()
-	if err != nil {
-		return err
+	return s.SaveTo(datadir.Dir())
+}
+
+func loadMigrating(dir, legacy string, removeLegacy bool) (*Settings, error) {
+	if exists(filepath.Join(dir, fileName)) {
+		return LoadFrom(dir)
 	}
-	return s.SaveTo(dir)
+	if legacy == "" || filepath.Clean(legacy) == filepath.Clean(dir) || !exists(filepath.Join(legacy, fileName)) {
+		return LoadFrom(dir)
+	}
+
+	migrated, err := LoadFrom(legacy)
+	if err != nil {
+		return LoadFrom(dir)
+	}
+	if err := migrated.SaveTo(dir); err != nil {
+		return migrated, nil
+	}
+	if removeLegacy {
+		_ = os.Remove(filepath.Join(legacy, fileName))
+	}
+	return migrated, nil
 }
 
 func LoadFrom(dir string) (*Settings, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
 	if os.IsNotExist(err) {
 		return &Settings{}, nil
 	}
@@ -64,5 +91,10 @@ func (s *Settings) SaveTo(dir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "settings.json"), data, 0o600)
+	return os.WriteFile(filepath.Join(dir, fileName), data, 0o600)
+}
+
+func exists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

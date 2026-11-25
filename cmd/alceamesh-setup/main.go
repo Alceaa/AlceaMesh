@@ -11,9 +11,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"alceacore.ru/alceamesh/internal/setup"
+	"alceacore.ru/alceamesh/internal/version"
 )
-
-const appVersion = "0.8.0-m8"
 
 //go:embed all:web
 var webAssets embed.FS
@@ -30,8 +29,8 @@ func main() {
 	}
 
 	options := setup.Options{
-		Dir:       setup.DefaultDir(),
-		Version:   appVersion,
+		Dir:       setup.PreferredDir(),
+		Version:   version.String(),
 		Service:   true,
 		Firewall:  true,
 		Shortcuts: true,
@@ -56,6 +55,8 @@ func main() {
 		}
 	}
 
+	options.PreviousDir = setup.InstalledDir()
+
 	if quiet {
 		os.Exit(runQuiet(payload, mode, options))
 	}
@@ -67,6 +68,9 @@ func main() {
 		Description: "AlceaMesh installer",
 		Assets: application.AssetOptions{
 			Handler: state,
+		},
+		Windows: application.WindowsOptions{
+			WebviewUserDataPath: webviewDataDir(options.Dir),
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
@@ -106,8 +110,18 @@ func runQuiet(payload fs.FS, mode string, options setup.Options) int {
 		self = ""
 	}
 
+	if mode == "uninstall" {
+		writeLog("Режим: удаление")
+	} else {
+		writeLog("Режим: установка")
+		for _, line := range setup.Plan(optionsForMode(mode, options, self)) {
+			writeLog("план: " + line)
+		}
+	}
+
 	var runErr error
 	if mode == "uninstall" {
+		options = optionsForMode(mode, options, self)
 		runErr = setup.Uninstall(options, self, writeLog)
 	} else {
 		runErr = setup.Install(payload, self, options, writeLog)
@@ -117,6 +131,15 @@ func runQuiet(payload fs.FS, mode string, options setup.Options) int {
 		return 1
 	}
 	return 0
+}
+
+func optionsForMode(mode string, options setup.Options, self string) setup.Options {
+	if mode == "uninstall" && (options.Dir == "" || options.Dir == setup.DefaultDir()) {
+		if dir := setup.DirFromExecutable(self); dir != "" {
+			options.Dir = dir
+		}
+	}
+	return options
 }
 
 func commandLine(args []string) string {
@@ -139,4 +162,19 @@ func writeLog(line string) {
 	}
 	defer file.Close()
 	fmt.Fprintln(file, line)
+}
+
+func webviewDataDir(target string) string {
+	candidates := make([]string, 0, 2)
+	if strings.TrimSpace(target) != "" {
+		candidates = append(candidates, filepath.Join(target, "data", "webview-setup"))
+	}
+	candidates = append(candidates, filepath.Join(os.TempDir(), "AlceaMesh-setup-webview"))
+
+	for _, candidate := range candidates {
+		if err := os.MkdirAll(candidate, 0o755); err == nil {
+			return candidate
+		}
+	}
+	return ""
 }

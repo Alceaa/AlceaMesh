@@ -1,11 +1,15 @@
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"alceacore.ru/alceamesh/internal/version"
+)
 
 type MetaService struct{}
 
 func (m *MetaService) Version() string {
-	return appVersion
+	return version.String()
 }
 
 func (m *MetaService) Coordinator() string {

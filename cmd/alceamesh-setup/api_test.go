@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"alceacore.ru/alceamesh/internal/setup"
+	"alceacore.ru/alceamesh/internal/version"
 )
 
 func newTestState(t *testing.T, mode string) *state {
@@ -64,8 +65,8 @@ func TestStateEndpointDescribesThePlan(t *testing.T) {
 	if data["mode"] != "install" {
 		t.Errorf("mode = %v", data["mode"])
 	}
-	if data["version"] != appVersion {
-		t.Errorf("version = %v, want %v", data["version"], appVersion)
+	if data["version"] != version.String() {
+		t.Errorf("version = %v, want %v", data["version"], version.String())
 	}
 	if data["elevated"] != false {
 		t.Errorf("elevated = %v, want false in tests", data["elevated"])

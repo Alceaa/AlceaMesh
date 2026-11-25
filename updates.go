@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"alceacore.ru/alceamesh/internal/datadir"
 	"alceacore.ru/alceamesh/internal/settings"
 	"alceacore.ru/alceamesh/internal/update"
+	"alceacore.ru/alceamesh/internal/version"
 )
 
 const defaultUpdateManifest = "https://alceacore.ru/alceamesh/latest.json"
@@ -45,11 +47,19 @@ func autoUpdateEnabled() bool {
 }
 
 func updateDir() string {
-	return filepath.Join(os.TempDir(), "AlceaMesh-update")
+	return filepath.Join(datadir.Dir(), "updates")
+}
+
+func appDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
 }
 
 func (m *MetaService) UpdateCheck() UpdateState {
-	state := UpdateState{Current: appVersion, Auto: autoUpdateEnabled()}
+	state := UpdateState{Current: version.String(), Auto: autoUpdateEnabled()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
@@ -60,9 +70,10 @@ func (m *MetaService) UpdateCheck() UpdateState {
 		return state
 	}
 
+	cleanupDownloads(release.Version)
 	state.Latest = release.Version
 	state.Notes = release.Notes
-	state.Available = update.IsNewer(appVersion, release.Version)
+	state.Available = update.IsNewer(version.String(), release.Version)
 	if !state.Available {
 		state.Message = "Установлена последняя версия."
 	}
@@ -78,7 +89,7 @@ func (m *MetaService) InstallUpdate() (string, error) {
 	if err != nil {
 		return "", friendlyError(err, fallbackNetwork)
 	}
-	if !update.IsNewer(appVersion, release.Version) {
+	if !update.IsNewer(version.String(), release.Version) {
 		return "Обновление не требуется.", nil
 	}
 
@@ -89,6 +100,7 @@ func (m *MetaService) InstallUpdate() (string, error) {
 	if err := launchInstaller(installer); err != nil {
 		return "", friendlyError(err, fallbackService)
 	}
+	quitSoon()
 	return "Обновляюсь до версии " + release.Version + ". Приложение закроется и откроется заново.", nil
 }
 
@@ -110,9 +122,44 @@ func (m *MetaService) UpdateSource() string {
 }
 
 func launchInstaller(path string) error {
-	command := exec.Command(path, "--quiet")
+	args := []string{"--quiet"}
+	if dir := appDir(); dir != "" {
+		args = append(args, "--dir", dir)
+	}
+	command := exec.Command(path, args...)
 	if err := command.Start(); err != nil {
 		return err
 	}
 	return command.Process.Release()
+}
+
+func quitSoon() {
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		if appInstance != nil {
+			appInstance.Quit()
+		}
+	}()
+}
+
+func cleanupDownloads(keep string) {
+	dir := updateDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	keepName := "AlceaMesh-Setup-" + keep + ".exe"
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		lower := strings.ToLower(name)
+		stale := strings.HasSuffix(lower, ".part") ||
+			(strings.HasPrefix(name, "AlceaMesh-Setup-") && strings.HasSuffix(lower, ".exe") && !strings.EqualFold(name, keepName))
+		if !stale {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, name))
+	}
 }

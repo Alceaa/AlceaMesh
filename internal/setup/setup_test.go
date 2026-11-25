@@ -38,6 +38,9 @@ func TestPlanMentionsEveryChoice(t *testing.T) {
 	if strings.Contains(plain, "ярлык") || strings.Contains(plain, "Ярлык") {
 		t.Error("shortcuts must not appear in the plan when they are disabled")
 	}
+	if !strings.Contains(plain, "от прежних версий") {
+		t.Error("the plan must mention cleaning up leftovers")
+	}
 
 	full := strings.Join(Plan(Options{
 		Dir:       `C:\Apps\AlceaMesh`,
@@ -50,6 +53,159 @@ func TestPlanMentionsEveryChoice(t *testing.T) {
 		if !strings.Contains(full, want) {
 			t.Errorf("the plan is missing %q", want)
 		}
+	}
+}
+
+func TestPlanShowsThePreviousInstallation(t *testing.T) {
+	previous := t.TempDir()
+	for _, name := range []string{"alceamesh.exe", "alceameshd.exe"} {
+		if err := os.WriteFile(filepath.Join(previous, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	plan := strings.Join(Plan(Options{Dir: `D:\Apps\AlceaMesh`, PreviousDir: previous}), "\n")
+	if !removalLineMentions(plan, previous) {
+		t.Errorf("the plan must mention removing %s: %s", previous, plan)
+	}
+
+	same := strings.Join(Plan(Options{Dir: previous, PreviousDir: previous}), "\n")
+	if removalLineMentions(same, previous) {
+		t.Errorf("reinstalling into the same folder must not promise a removal: %s", same)
+	}
+
+	untouched := t.TempDir()
+	empty := strings.Join(Plan(Options{Dir: `D:\Apps\AlceaMesh`, PreviousDir: untouched}), "\n")
+	if removalLineMentions(empty, untouched) {
+		t.Errorf("a folder without our files must not be removed: %s", empty)
+	}
+}
+
+func removalLineMentions(plan, dir string) bool {
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.Contains(line, "прежнюю копию") && strings.Contains(line, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRemovalCandidates(t *testing.T) {
+	ours := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ours, "alceamesh.exe"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	empty := t.TempDir()
+	target := `D:\Apps\AlceaMesh`
+
+	got := removalCandidates(target, ours, empty, target)
+	if len(got) != 1 || got[0] != ours {
+		t.Errorf("removalCandidates() = %v, want only %q", got, ours)
+	}
+
+	if got := removalCandidates(target, empty); len(got) != 0 {
+		t.Errorf("removalCandidates() = %v, want nothing", got)
+	}
+}
+
+func TestPreviousInstallGuards(t *testing.T) {
+	ours := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ours, "alceamesh.exe"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := previousInstall(ours, `D:\Apps\AlceaMesh`); got != ours {
+		t.Errorf("previousInstall() = %q, want %q", got, ours)
+	}
+	if got := previousInstall(ours, ours); got != "" {
+		t.Errorf("the same folder must be skipped, got %q", got)
+	}
+	if got := previousInstall(ours, filepath.Join(ours, "nested")); got != "" {
+		t.Errorf("a parent of the new folder must never be removed, got %q", got)
+	}
+	if got := previousInstall("  ", ours); got != "" {
+		t.Errorf("an empty previous folder must be skipped, got %q", got)
+	}
+	if got := previousInstall(t.TempDir(), ours); got != "" {
+		t.Errorf("a folder without our files must be skipped, got %q", got)
+	}
+	if got := previousInstall(`C:\`, ours); got != "" {
+		t.Errorf("a drive root must never be removed, got %q", got)
+	}
+}
+
+func TestDirFromExecutable(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "alceamesh-setup.exe")
+	if err := os.WriteFile(filepath.Join(dir, "alceamesh.exe"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := DirFromExecutable(self); got != dir {
+		t.Errorf("DirFromExecutable() = %q, want %q", got, dir)
+	}
+	if got := DirFromExecutable(""); got != "" {
+		t.Errorf("DirFromExecutable(\"\") = %q, want empty", got)
+	}
+	if got := DirFromExecutable(filepath.Join(t.TempDir(), uninstallExe)); got != "" {
+		t.Errorf("a folder without our files must be rejected, got %q", got)
+	}
+}
+
+func TestDataDirsCoverPortableAndSystemPlaces(t *testing.T) {
+	t.Setenv("AppData", `C:\Users\test\AppData\Roaming`)
+	t.Setenv("LocalAppData", `C:\Users\test\AppData\Local`)
+
+	dirs := dataDirs(`D:\Apps\AlceaMesh`)
+	want := []string{
+		`D:\Apps\AlceaMesh\data`,
+		filepath.Join(`C:\Users\test\AppData\Roaming`, AppName),
+		filepath.Join(`C:\Users\test\AppData\Local`, AppName),
+	}
+	if len(dirs) != len(want) {
+		t.Fatalf("dataDirs() = %v, want %v", dirs, want)
+	}
+	for index := range want {
+		if dirs[index] != want[index] {
+			t.Errorf("dataDirs()[%d] = %q, want %q", index, dirs[index], want[index])
+		}
+	}
+
+	t.Setenv("AppData", "")
+	t.Setenv("LocalAppData", "")
+	if got := dataDirs(`D:\Apps\AlceaMesh`); len(got) != 1 {
+		t.Errorf("dataDirs() without a profile = %v, want only the portable folder", got)
+	}
+}
+
+func TestRemoveDataDirsDeletesWhatExists(t *testing.T) {
+	portable := filepath.Join(t.TempDir(), "AlceaMesh")
+	dirs := []string{
+		filepath.Join(portable, "data"),
+		filepath.Join(portable, "roaming", AppName),
+		filepath.Join(portable, "local", AppName),
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	t.Setenv("AppData", filepath.Join(portable, "roaming"))
+	t.Setenv("LocalAppData", filepath.Join(portable, "local"))
+
+	if err := removeDataDirs(portable, func(string, ...any) {}); err != nil {
+		t.Fatalf("removeDataDirs: %v", err)
+	}
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("%s must be gone, stat err = %v", dir, err)
+		}
+	}
+
+	if err := removeDataDirs(portable, func(string, ...any) {}); err != nil {
+		t.Errorf("a second run must not fail: %v", err)
 	}
 }
 
@@ -78,6 +234,15 @@ func TestInstallDryRunChangesNothing(t *testing.T) {
 	}
 	if len(lines) < len(PayloadFiles()) {
 		t.Errorf("log has %d lines, expected at least %d", len(lines), len(PayloadFiles()))
+	}
+	found := false
+	for _, line := range lines {
+		if line == "Папка установки: "+dir {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the log must name the target folder, got %v", lines)
 	}
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
 		t.Errorf("a dry run created %d entries in %s", len(entries), dir)

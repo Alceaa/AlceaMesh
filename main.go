@@ -3,14 +3,16 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+
+	"alceacore.ru/alceamesh/internal/datadir"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
-
-const appVersion = "1.0.1"
 
 var (
 	appInstance    *application.App
@@ -42,6 +44,9 @@ func main() {
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
+		Windows: application.WindowsOptions{
+			WebviewUserDataPath: webviewDataDir(),
+		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
@@ -53,4 +58,12 @@ func main() {
 	if err := appInstance.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func webviewDataDir() string {
+	dir := filepath.Join(datadir.Dir(), "webview")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	return dir
 }

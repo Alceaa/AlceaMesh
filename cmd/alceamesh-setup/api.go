@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"alceacore.ru/alceamesh/internal/setup"
+	"alceacore.ru/alceamesh/internal/version"
 )
 
 type state struct {
@@ -104,9 +105,10 @@ func (s *state) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"version":   appVersion,
+		"version":   version.String(),
 		"mode":      s.mode,
 		"dir":       options.Dir,
+		"current":   setup.InstalledDir(),
 		"elevated":  setup.Elevated(),
 		"installed": installed,
 		"payload":   payload,
