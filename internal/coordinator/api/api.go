@@ -23,6 +23,8 @@ type Server struct {
 	RequireSignature bool
 	Nonces           *identity.NonceCache
 	Now              func() time.Time
+
+	claimStore *claimStore
 }
 
 func (s *Server) Handler() http.Handler {
@@ -30,6 +32,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/ping", s.handlePing)
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
 	mux.HandleFunc("POST /v1/enroll", s.handleEnroll)
+	mux.HandleFunc("POST /v1/claim/challenge", s.handleClaimChallenge)
+	mux.HandleFunc("POST /v1/claim", s.handleClaim)
 	mux.HandleFunc("POST /v1/heartbeat", s.withSignature(s.handleHeartbeat))
 	mux.HandleFunc("GET /v1/devices", s.withSignature(s.handleListDevices))
 	mux.HandleFunc("DELETE /v1/devices/{id}", s.withSignature(s.handleDeleteDevice))

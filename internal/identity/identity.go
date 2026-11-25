@@ -173,6 +173,36 @@ func (s SignedRequest) Verify(publicKey string, method, path, query string, body
 	return nil
 }
 
+func SignMessage(key *Key, message []byte) string {
+	return base64.StdEncoding.EncodeToString(key.Sign(message))
+}
+
+func VerifySignature(signPublicKey string, message []byte, signature string) error {
+	key, err := ParsePublicKey(signPublicKey)
+	if err != nil {
+		return err
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(signature))
+	if err != nil {
+		return fmt.Errorf("identity: signature is not base64: %w", err)
+	}
+	if len(raw) != ed25519.SignatureSize {
+		return fmt.Errorf("identity: signature must be %d bytes", ed25519.SignatureSize)
+	}
+	if !ed25519.Verify(key, message, raw) {
+		return ErrBadSignature
+	}
+	return nil
+}
+
+func CanonicalClaim(claimID, proof, signPublicKey string) []byte {
+	return []byte(strings.Join([]string{"alcea-claim-v1", claimID, proof, signPublicKey}, "\n"))
+}
+
+func CanonicalEnroll(invite, deviceName, platform, wgPublicKey, signPublicKey string) []byte {
+	return []byte(strings.Join([]string{"alcea-enroll-v1", invite, deviceName, platform, wgPublicKey, signPublicKey}, "\n"))
+}
+
 func HeadersPresent(header http.Header) bool {
 	for _, name := range []string{HeaderDevice, HeaderTimestamp, HeaderNonce, HeaderSignature} {
 		if strings.TrimSpace(header.Get(name)) != "" {

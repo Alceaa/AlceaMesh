@@ -294,6 +294,21 @@ func (r *Registry) DeviceByID(id string) (*Device, error) {
 	return &device, nil
 }
 
+func (r *Registry) DeviceByWGKey(publicKey string) (*Device, error) {
+	key := strings.TrimSpace(publicKey)
+	if key == "" {
+		return nil, fmt.Errorf("wireguard public key is required")
+	}
+	device, ok, err := r.store.GetDeviceByPublicKey(key)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrUnknownDevice
+	}
+	return &device, nil
+}
+
 func (r *Registry) RevokeDevice(id string) (*Device, error) {
 	device, ok, err := r.store.GetDevice(strings.TrimSpace(id))
 	if err != nil {
