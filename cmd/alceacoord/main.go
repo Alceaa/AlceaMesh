@@ -13,6 +13,7 @@ import (
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/coordinator/api"
 	"alceacore.ru/alceamesh/internal/coordinator/sqlitestore"
+	"alceacore.ru/alceamesh/internal/identity"
 	buildversion "alceacore.ru/alceamesh/internal/version"
 )
 
@@ -69,6 +70,7 @@ func cmdRun(args []string) error {
 	adminKey := fs.String("admin-key", os.Getenv("ALCEAMESH_ADMIN_KEY"), "admin API key (env ALCEAMESH_ADMIN_KEY)")
 	pool := fs.String("pool", coordinator.DefaultPool, "mesh IP pool (CIDR)")
 	presenceTTL := fs.Duration("presence-ttl", coordinator.DefaultPresenceTTL, "presence timeout")
+	legacyMode := fs.Bool("legacy-mode", true, "accept requests without a device signature (for clients older than the trust update)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -87,7 +89,13 @@ func cmdRun(args []string) error {
 		return err
 	}
 
-	server := &api.Server{Registry: registry, AdminKey: *adminKey, Version: buildversion.String()}
+	server := &api.Server{
+		Registry:         registry,
+		AdminKey:         *adminKey,
+		Version:          buildversion.String(),
+		RequireSignature: !*legacyMode,
+		Nonces:           identity.NewNonceCache(identity.DefaultNonceTTL, identity.DefaultNonceLimit),
+	}
 	httpServer := &http.Server{
 		Addr:              *listen,
 		Handler:           server.Handler(),
@@ -104,6 +112,9 @@ func cmdRun(args []string) error {
 
 	if *adminKey == "" {
 		log.Println("warning: no admin key set, token management is disabled")
+	}
+	if *legacyMode {
+		log.Println("warning: legacy mode is on — requests without a device signature are accepted (fits clients older than the trust update; turn off with -legacy-mode=false)")
 	}
 	log.Printf("alceacoord %s listening on %s (db=%s, pool=%s, presence-ttl=%s)",
 		buildversion.String(), *listen, *dbPath, *pool, *presenceTTL)

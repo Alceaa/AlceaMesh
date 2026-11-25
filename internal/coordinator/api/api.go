@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"alceacore.ru/alceamesh/internal/coordinator"
+	"alceacore.ru/alceamesh/internal/identity"
 )
 
 const maxBodyBytes = 1 << 20
@@ -18,6 +19,10 @@ type Server struct {
 	Registry *coordinator.Registry
 	AdminKey string
 	Version  string
+
+	RequireSignature bool
+	Nonces           *identity.NonceCache
+	Now              func() time.Time
 }
 
 func (s *Server) Handler() http.Handler {
@@ -25,15 +30,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/ping", s.handlePing)
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
 	mux.HandleFunc("POST /v1/enroll", s.handleEnroll)
-	mux.HandleFunc("POST /v1/heartbeat", s.handleHeartbeat)
-	mux.HandleFunc("GET /v1/devices", s.handleListDevices)
-	mux.HandleFunc("DELETE /v1/devices/{id}", s.handleDeleteDevice)
-	mux.HandleFunc("POST /v1/tokens", s.handleCreateToken)
-	mux.HandleFunc("GET /v1/tokens", s.handleListTokens)
-	mux.HandleFunc("POST /v1/presence", s.handlePresence)
-	mux.HandleFunc("GET /v1/peers", s.handlePeers)
-	mux.HandleFunc("POST /v1/signal", s.handlePostSignal)
-	mux.HandleFunc("GET /v1/signal", s.handleTakeSignals)
+	mux.HandleFunc("POST /v1/heartbeat", s.withSignature(s.handleHeartbeat))
+	mux.HandleFunc("GET /v1/devices", s.withSignature(s.handleListDevices))
+	mux.HandleFunc("DELETE /v1/devices/{id}", s.withSignature(s.handleDeleteDevice))
+	mux.HandleFunc("POST /v1/tokens", s.withSignature(s.handleCreateToken))
+	mux.HandleFunc("GET /v1/tokens", s.withSignature(s.handleListTokens))
+	mux.HandleFunc("POST /v1/presence", s.withSignature(s.handlePresence))
+	mux.HandleFunc("GET /v1/peers", s.withSignature(s.handlePeers))
+	mux.HandleFunc("POST /v1/signal", s.withSignature(s.handlePostSignal))
+	mux.HandleFunc("GET /v1/signal", s.withSignature(s.handleTakeSignals))
 	return mux
 }
 
