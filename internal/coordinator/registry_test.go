@@ -1,9 +1,12 @@
 package coordinator
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
+
+	"alceacore.ru/alceamesh/internal/identity"
 )
 
 type clock struct {
@@ -385,5 +388,280 @@ func TestSignalsAreScopedToRecipient(t *testing.T) {
 	}
 	if got := registry.TakeSignals("bob"); len(got) != 1 {
 		t.Errorf("bob signals = %d, want 1", len(got))
+	}
+}
+
+func testSignKey(t *testing.T) string {
+	t.Helper()
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate: %v", err)
+	}
+	return key.PublicKey()
+}
+
+func TestInviteLifecycle(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	invitation, code, err := registry.CreateInvite("для Димы", "10.0.0.42", 1, time.Hour)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if len(code) != inviteCodeBytes*2 {
+		t.Errorf("code length = %d, want %d", len(code), inviteCodeBytes*2)
+	}
+	if invitation.CodeHash != HashInviteCode(code) {
+		t.Error("the stored hash must match the issued code")
+	}
+	if invitation.Uses != 0 || invitation.MaxUses != 1 {
+		t.Errorf("invitation = %+v", invitation)
+	}
+
+	device, err := registry.EnrollWithInvite(InviteEnrollRequest{
+		Code:          code,
+		Name:          "Домашний ПК",
+		PublicKey:     "wg-public-key",
+		SignPublicKey: testSignKey(t),
+		Platform:      "windows",
+	})
+	if err != nil {
+		t.Fatalf("EnrollWithInvite: %v", err)
+	}
+	if device.SignPublicKey == "" {
+		t.Error("the signing key must be stored")
+	}
+	if device.Legacy {
+		t.Error("a device enrolled by invitation must not be flagged as legacy")
+	}
+	if device.MeshIP != "10.0.0.42" {
+		t.Errorf("mesh ip = %q, want the pinned address", device.MeshIP)
+	}
+	if device.Attachable() {
+		t.Error("an invited device must not be attachable")
+	}
+
+	if _, err := registry.EnrollWithInvite(InviteEnrollRequest{
+		Code:          code,
+		Name:          "Второй",
+		SignPublicKey: testSignKey(t),
+	}); !errors.Is(err, ErrInviteExhausted) {
+		t.Errorf("reusing a single-use invite: err = %v, want ErrInviteExhausted", err)
+	}
+
+	invites, err := registry.Invites()
+	if err != nil {
+		t.Fatalf("Invites: %v", err)
+	}
+	if len(invites) != 1 || invites[0].Uses != 1 {
+		t.Errorf("invites = %+v, want one with a single use", invites)
+	}
+}
+
+func TestInviteUsesLimit(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	_, code, err := registry.CreateInvite("на двоих", "", 2, 0)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	for index := 0; index < 2; index++ {
+		if _, err := registry.EnrollWithInvite(InviteEnrollRequest{
+			Code:          code,
+			Name:          "устройство",
+			SignPublicKey: testSignKey(t),
+		}); err != nil {
+			t.Fatalf("enroll %d: %v", index, err)
+		}
+	}
+	if _, err := registry.EnrollWithInvite(InviteEnrollRequest{
+		Code:          code,
+		Name:          "третье",
+		SignPublicKey: testSignKey(t),
+	}); !errors.Is(err, ErrInviteExhausted) {
+		t.Errorf("err = %v, want ErrInviteExhausted", err)
+	}
+}
+
+func TestHashInviteCodeNormalizes(t *testing.T) {
+	if HashInviteCode("  AB12  ") != HashInviteCode("ab12") {
+		t.Error("the hash must ignore case and surrounding spaces")
+	}
+	if HashInviteCode("ab12") == HashInviteCode("ab13") {
+		t.Error("different codes must hash differently")
+	}
+	if len(HashInviteCode("ab12")) != 64 {
+		t.Errorf("hash length = %d, want 64", len(HashInviteCode("ab12")))
+	}
+}
+
+func TestInviteExpiresAndRevokes(t *testing.T) {
+	registry, clk := newTestRegistry(t)
+
+	_, code, err := registry.CreateInvite("", "", 1, time.Minute)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	clk.t = clk.t.Add(2 * time.Minute)
+	if _, err := registry.EnrollWithInvite(InviteEnrollRequest{
+		Code:          code,
+		Name:          "поздно",
+		SignPublicKey: testSignKey(t),
+	}); !errors.Is(err, ErrInviteExpired) {
+		t.Errorf("err = %v, want ErrInviteExpired", err)
+	}
+
+	invitation, revokedCode, err := registry.CreateInvite("", "", 1, 0)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if _, err := registry.RevokeInvite(invitation.ID); err != nil {
+		t.Fatalf("RevokeInvite: %v", err)
+	}
+	if _, err := registry.EnrollWithInvite(InviteEnrollRequest{
+		Code:          revokedCode,
+		Name:          "отозванный",
+		SignPublicKey: testSignKey(t),
+	}); !errors.Is(err, ErrInviteRevoked) {
+		t.Errorf("err = %v, want ErrInviteRevoked", err)
+	}
+
+	if _, err := registry.EnrollWithInvite(InviteEnrollRequest{
+		Code:          "ffffffffffffffffffffffffffffffff",
+		Name:          "чужой код",
+		SignPublicKey: testSignKey(t),
+	}); !errors.Is(err, ErrInviteUnknown) {
+		t.Errorf("err = %v, want ErrInviteUnknown", err)
+	}
+	if _, err := registry.RevokeInvite("нет-такого"); !errors.Is(err, ErrInviteUnknown) {
+		t.Errorf("revoking an unknown invite: err = %v, want ErrInviteUnknown", err)
+	}
+}
+
+func TestInviteRejectsBadInput(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	_, code, err := registry.CreateInvite("", "", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	cases := map[string]InviteEnrollRequest{
+		"no name":      {Code: code, SignPublicKey: testSignKey(t)},
+		"no code":      {Name: "пк", SignPublicKey: testSignKey(t)},
+		"no sign key":  {Code: code, Name: "пк"},
+		"bad sign key": {Code: code, Name: "пк", SignPublicKey: "не-ключ"},
+	}
+	for name, request := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := registry.EnrollWithInvite(request); err == nil {
+				t.Error("the request must be rejected")
+			}
+		})
+	}
+
+	if _, _, err := registry.CreateInvite("", "не-адрес", 0, 0); err == nil {
+		t.Error("a broken mesh ip must be rejected")
+	}
+}
+
+func TestAttachExistingDevice(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	device, err := registry.Announce(AnnounceRequest{PublicKey: "wg-old", Name: "старый ноут", Available: true})
+	if err != nil {
+		t.Fatalf("Announce: %v", err)
+	}
+	if !device.Legacy || !device.Attachable() {
+		t.Fatalf("a device created by presence must be attachable: %+v", device)
+	}
+
+	key := testSignKey(t)
+	attached, err := registry.AttachDevice(device.ID, key)
+	if err != nil {
+		t.Fatalf("AttachDevice: %v", err)
+	}
+	if attached.SignPublicKey != key {
+		t.Errorf("sign key = %q, want %q", attached.SignPublicKey, key)
+	}
+	if attached.Attachable() {
+		t.Error("attaching must be a one-time operation")
+	}
+	if _, err := registry.AttachDevice(device.ID, testSignKey(t)); !errors.Is(err, ErrNotAttachable) {
+		t.Errorf("second attach: err = %v, want ErrNotAttachable", err)
+	}
+	if _, err := registry.AttachDevice("нет-такого", testSignKey(t)); !errors.Is(err, ErrUnknownDevice) {
+		t.Errorf("unknown device: err = %v, want ErrUnknownDevice", err)
+	}
+	if _, err := registry.AttachDevice(device.ID, "не-ключ"); err == nil {
+		t.Error("a broken signing key must be rejected")
+	}
+}
+
+func TestRevokedDeviceIsRejected(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	device, err := registry.Announce(AnnounceRequest{PublicKey: "wg-revoked", Name: "списанный", Available: true})
+	if err != nil {
+		t.Fatalf("Announce: %v", err)
+	}
+	revoked, err := registry.RevokeDevice(device.ID)
+	if err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	if !revoked.Revoked() {
+		t.Fatal("the device must be marked as revoked")
+	}
+
+	if _, err := registry.Announce(AnnounceRequest{PublicKey: "wg-revoked", Name: "снова"}); !errors.Is(err, ErrDeviceRevoked) {
+		t.Errorf("announce: err = %v, want ErrDeviceRevoked", err)
+	}
+	if _, err := registry.Heartbeat(device.Secret); !errors.Is(err, ErrDeviceRevoked) {
+		t.Errorf("heartbeat: err = %v, want ErrDeviceRevoked", err)
+	}
+	if _, err := registry.AttachDevice(device.ID, testSignKey(t)); !errors.Is(err, ErrDeviceRevoked) {
+		t.Errorf("attach: err = %v, want ErrDeviceRevoked", err)
+	}
+	if _, err := registry.RevokeDevice("нет-такого"); !errors.Is(err, ErrUnknownDevice) {
+		t.Errorf("unknown device: err = %v, want ErrUnknownDevice", err)
+	}
+
+	peers, err := registry.Peers(false)
+	if err != nil {
+		t.Fatalf("Peers: %v", err)
+	}
+	if len(peers) != 0 {
+		t.Errorf("peers = %+v, want nothing: revoked devices must be hidden", peers)
+	}
+
+	devices, err := registry.Devices()
+	if err != nil {
+		t.Fatalf("Devices: %v", err)
+	}
+	if len(devices) != 1 || !devices[0].Revoked() {
+		t.Errorf("the admin list must still show the revoked device: %+v", devices)
+	}
+}
+
+func TestEnrollStoresSignKeyAndMarksLegacy(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	token, err := registry.CreateToken("laptop", "", 0)
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	key := testSignKey(t)
+	device, err := registry.Enroll(EnrollRequest{
+		Token:         token.Value,
+		Name:          "ноут",
+		SignPublicKey: key,
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	if device.SignPublicKey != key {
+		t.Errorf("sign key = %q, want %q", device.SignPublicKey, key)
+	}
+	if !device.Legacy {
+		t.Error("a token-enrolled device predates invites and must stay attachable")
 	}
 }

@@ -1,6 +1,7 @@
 package sqlitestore
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -169,5 +170,170 @@ func TestRegistryWithSQLite(t *testing.T) {
 	}
 	if _, err := registry.Heartbeat(device.Secret); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
+	}
+}
+
+func TestInvitationRoundTrip(t *testing.T) {
+	store := openTestStore(t)
+
+	created := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	invitation := coordinator.Invitation{
+		ID:        "inv-1",
+		CodeHash:  coordinator.HashInviteCode("abcd1234"),
+		Label:     "для Димы",
+		MeshIP:    "10.0.0.5",
+		MaxUses:   2,
+		Uses:      1,
+		CreatedAt: created,
+		ExpiresAt: created.Add(24 * time.Hour),
+	}
+	if err := store.PutInvitation(invitation); err != nil {
+		t.Fatalf("PutInvitation: %v", err)
+	}
+
+	byID, ok, err := store.GetInvitation("inv-1")
+	if err != nil || !ok {
+		t.Fatalf("GetInvitation: ok = %v, err = %v", ok, err)
+	}
+	if byID.CodeHash != invitation.CodeHash || byID.Label != invitation.Label ||
+		byID.MaxUses != 2 || byID.Uses != 1 || byID.MeshIP != "10.0.0.5" {
+		t.Errorf("invitation = %+v", byID)
+	}
+	if !byID.CreatedAt.Equal(created) || !byID.ExpiresAt.Equal(invitation.ExpiresAt) {
+		t.Errorf("timestamps = %s / %s", byID.CreatedAt, byID.ExpiresAt)
+	}
+
+	byHash, ok, err := store.GetInvitationByHash(invitation.CodeHash)
+	if err != nil || !ok || byHash.ID != "inv-1" {
+		t.Errorf("GetInvitationByHash: ok = %v, err = %v, invitation = %+v", ok, err, byHash)
+	}
+
+	invitation.Uses = 2
+	invitation.RevokedAt = created.Add(time.Hour)
+	if err := store.PutInvitation(invitation); err != nil {
+		t.Fatalf("PutInvitation (update): %v", err)
+	}
+	updated, _, err := store.GetInvitation("inv-1")
+	if err != nil {
+		t.Fatalf("GetInvitation: %v", err)
+	}
+	if updated.Uses != 2 || !updated.Revoked() {
+		t.Errorf("updated = %+v, want uses 2 and revoked", updated)
+	}
+
+	list, err := store.ListInvitations()
+	if err != nil {
+		t.Fatalf("ListInvitations: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("list length = %d, want 1", len(list))
+	}
+
+	if _, ok, err := store.GetInvitation("нет"); err != nil || ok {
+		t.Errorf("unknown id: ok = %v, err = %v", ok, err)
+	}
+	if _, ok, err := store.GetInvitationByHash("нет"); err != nil || ok {
+		t.Errorf("unknown hash: ok = %v, err = %v", ok, err)
+	}
+	if _, ok, err := store.GetInvitationByHash(""); err != nil || ok {
+		t.Errorf("empty hash: ok = %v, err = %v", ok, err)
+	}
+}
+
+func TestDeviceIdentityFieldsRoundTrip(t *testing.T) {
+	store := openTestStore(t)
+
+	enrolled := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	device := coordinator.Device{
+		ID:            "dev-1",
+		Secret:        "secret-1",
+		Name:          "ноут",
+		PublicKey:     "wg-public",
+		SignPublicKey: "sign-public",
+		MeshIP:        "10.0.0.7",
+		Platform:      "windows",
+		Available:     true,
+		EnrolledAt:    enrolled,
+		LastSeen:      enrolled.Add(time.Minute),
+		RevokedAt:     enrolled.Add(2 * time.Hour),
+		Legacy:        true,
+	}
+	if err := store.PutDevice(device); err != nil {
+		t.Fatalf("PutDevice: %v", err)
+	}
+
+	got, ok, err := store.GetDevice("dev-1")
+	if err != nil || !ok {
+		t.Fatalf("GetDevice: ok = %v, err = %v", ok, err)
+	}
+	if got.SignPublicKey != "sign-public" {
+		t.Errorf("sign key = %q", got.SignPublicKey)
+	}
+	if !got.Legacy {
+		t.Error("the legacy flag must survive a round trip")
+	}
+	if !got.Revoked() || !got.RevokedAt.Equal(device.RevokedAt) {
+		t.Errorf("revoked_at = %s, want %s", got.RevokedAt, device.RevokedAt)
+	}
+	if got.Attachable() {
+		t.Error("a revoked device must not be attachable")
+	}
+}
+
+func TestOpenMigratesOldDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	legacy, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := legacy.Exec(`
+		CREATE TABLE devices (
+			id          TEXT PRIMARY KEY,
+			secret      TEXT NOT NULL,
+			name        TEXT NOT NULL,
+			public_key  TEXT NOT NULL DEFAULT '',
+			mesh_ip     TEXT NOT NULL DEFAULT '',
+			platform    TEXT NOT NULL DEFAULT '',
+			enrolled_at TEXT NOT NULL DEFAULT '',
+			last_seen   TEXT NOT NULL DEFAULT ''
+		)`); err != nil {
+		t.Fatalf("create old table: %v", err)
+	}
+	if _, err := legacy.Exec(`INSERT INTO devices (id, secret, name, public_key, mesh_ip, platform, enrolled_at, last_seen)
+		VALUES ('old-1', 'sec-old', 'старый ПК', 'wg-old', '10.0.0.9', 'windows', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("insert old row: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (migrate): %v", err)
+	}
+	defer store.Close()
+
+	device, ok, err := store.GetDevice("old-1")
+	if err != nil || !ok {
+		t.Fatalf("the migrated device must be readable: ok = %v, err = %v", ok, err)
+	}
+	if device.Name != "старый ПК" || device.PublicKey != "wg-old" || device.MeshIP != "10.0.0.9" {
+		t.Errorf("migrated device = %+v", device)
+	}
+	if device.SignPublicKey != "" || device.Revoked() || device.Legacy {
+		t.Errorf("the new columns must be empty for old rows: %+v", device)
+	}
+
+	invitation := coordinator.Invitation{
+		ID:        "inv-old",
+		CodeHash:  coordinator.HashInviteCode("код"),
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.PutInvitation(invitation); err != nil {
+		t.Fatalf("the invitations table must exist after migration: %v", err)
+	}
+	if _, ok, err := store.GetInvitationByHash(invitation.CodeHash); err != nil || !ok {
+		t.Errorf("GetInvitationByHash: ok = %v, err = %v", ok, err)
 	}
 }

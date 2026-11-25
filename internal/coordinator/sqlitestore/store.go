@@ -13,15 +13,18 @@ import (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS devices (
-	id          TEXT PRIMARY KEY,
-	secret      TEXT NOT NULL,
-	name        TEXT NOT NULL,
-	public_key  TEXT NOT NULL DEFAULT '',
-	mesh_ip     TEXT NOT NULL DEFAULT '',
-	platform    TEXT NOT NULL DEFAULT '',
-	available   INTEGER NOT NULL DEFAULT 0,
-	enrolled_at TEXT NOT NULL DEFAULT '',
-	last_seen   TEXT NOT NULL DEFAULT ''
+	id              TEXT PRIMARY KEY,
+	secret          TEXT NOT NULL,
+	name            TEXT NOT NULL,
+	public_key      TEXT NOT NULL DEFAULT '',
+	sign_public_key TEXT NOT NULL DEFAULT '',
+	mesh_ip         TEXT NOT NULL DEFAULT '',
+	platform        TEXT NOT NULL DEFAULT '',
+	available       INTEGER NOT NULL DEFAULT 0,
+	enrolled_at     TEXT NOT NULL DEFAULT '',
+	last_seen       TEXT NOT NULL DEFAULT '',
+	revoked_at      TEXT NOT NULL DEFAULT '',
+	legacy          INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_secret ON devices(secret);
 CREATE INDEX IF NOT EXISTS idx_devices_public_key ON devices(public_key);
@@ -34,6 +37,19 @@ CREATE TABLE IF NOT EXISTS tokens (
 	expires_at TEXT NOT NULL DEFAULT '',
 	used_by    TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS invitations (
+	id         TEXT PRIMARY KEY,
+	code_hash  TEXT NOT NULL,
+	label      TEXT NOT NULL DEFAULT '',
+	mesh_ip    TEXT NOT NULL DEFAULT '',
+	max_uses   INTEGER NOT NULL DEFAULT 0,
+	uses       INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL DEFAULT '',
+	expires_at TEXT NOT NULL DEFAULT '',
+	revoked_at TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invitations_code_hash ON invitations(code_hash);
 `
 
 type Store struct {
@@ -52,6 +68,13 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 	_, _ = db.Exec(`ALTER TABLE devices ADD COLUMN available INTEGER NOT NULL DEFAULT 0`)
+	for _, statement := range []string{
+		`ALTER TABLE devices ADD COLUMN sign_public_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE devices ADD COLUMN revoked_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE devices ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0`,
+	} {
+		_, _ = db.Exec(statement)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -61,20 +84,24 @@ func (s *Store) Close() error {
 
 func (s *Store) PutDevice(device coordinator.Device) error {
 	_, err := s.db.Exec(`
-		INSERT INTO devices (id, secret, name, public_key, mesh_ip, platform, available, enrolled_at, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO devices (id, secret, name, public_key, sign_public_key, mesh_ip, platform, available, enrolled_at, last_seen, revoked_at, legacy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			secret      = excluded.secret,
-			name        = excluded.name,
-			public_key  = excluded.public_key,
-			mesh_ip     = excluded.mesh_ip,
-			platform    = excluded.platform,
-			available   = excluded.available,
-			enrolled_at = excluded.enrolled_at,
-			last_seen   = excluded.last_seen`,
-		device.ID, device.Secret, device.Name, device.PublicKey,
+			secret          = excluded.secret,
+			name            = excluded.name,
+			public_key      = excluded.public_key,
+			sign_public_key = excluded.sign_public_key,
+			mesh_ip         = excluded.mesh_ip,
+			platform        = excluded.platform,
+			available       = excluded.available,
+			enrolled_at     = excluded.enrolled_at,
+			last_seen       = excluded.last_seen,
+			revoked_at      = excluded.revoked_at,
+			legacy          = excluded.legacy`,
+		device.ID, device.Secret, device.Name, device.PublicKey, device.SignPublicKey,
 		device.MeshIP, device.Platform, boolToInt(device.Available),
-		formatTime(device.EnrolledAt), formatTime(device.LastSeen))
+		formatTime(device.EnrolledAt), formatTime(device.LastSeen),
+		formatTime(device.RevokedAt), boolToInt(device.Legacy))
 	return err
 }
 
@@ -164,9 +191,62 @@ func (s *Store) ListTokens() ([]coordinator.Token, error) {
 	return tokens, rows.Err()
 }
 
+func (s *Store) PutInvitation(invitation coordinator.Invitation) error {
+	_, err := s.db.Exec(`
+		INSERT INTO invitations (id, code_hash, label, mesh_ip, max_uses, uses, created_at, expires_at, revoked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			code_hash  = excluded.code_hash,
+			label      = excluded.label,
+			mesh_ip    = excluded.mesh_ip,
+			max_uses   = excluded.max_uses,
+			uses       = excluded.uses,
+			created_at = excluded.created_at,
+			expires_at = excluded.expires_at,
+			revoked_at = excluded.revoked_at`,
+		invitation.ID, invitation.CodeHash, invitation.Label, invitation.MeshIP,
+		invitation.MaxUses, invitation.Uses,
+		formatTime(invitation.CreatedAt), formatTime(invitation.ExpiresAt), formatTime(invitation.RevokedAt))
+	return err
+}
+
+func (s *Store) GetInvitation(id string) (coordinator.Invitation, bool, error) {
+	row := s.db.QueryRow(selectInvitation+` WHERE id = ?`, id)
+	return scanInvitation(row)
+}
+
+func (s *Store) GetInvitationByHash(hash string) (coordinator.Invitation, bool, error) {
+	if hash == "" {
+		return coordinator.Invitation{}, false, nil
+	}
+	row := s.db.QueryRow(selectInvitation+` WHERE code_hash = ?`, hash)
+	return scanInvitation(row)
+}
+
+func (s *Store) ListInvitations() ([]coordinator.Invitation, error) {
+	rows, err := s.db.Query(selectInvitation + ` ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var invitations []coordinator.Invitation
+	for rows.Next() {
+		invitation, ok, err := scanInvitation(rows)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			invitations = append(invitations, invitation)
+		}
+	}
+	return invitations, rows.Err()
+}
+
 const (
-	selectDevice = `SELECT id, secret, name, public_key, mesh_ip, platform, available, enrolled_at, last_seen FROM devices`
-	selectToken  = `SELECT value, label, mesh_ip, created_at, expires_at, used_by FROM tokens`
+	selectDevice     = `SELECT id, secret, name, public_key, sign_public_key, mesh_ip, platform, available, enrolled_at, last_seen, revoked_at, legacy FROM devices`
+	selectToken      = `SELECT value, label, mesh_ip, created_at, expires_at, used_by FROM tokens`
+	selectInvitation = `SELECT id, code_hash, label, mesh_ip, max_uses, uses, created_at, expires_at, revoked_at FROM invitations`
 )
 
 type scanner interface {
@@ -177,11 +257,13 @@ func scanDevice(sc scanner) (coordinator.Device, bool, error) {
 	var (
 		device     coordinator.Device
 		available  int
+		legacy     int
 		enrolledAt string
 		lastSeen   string
+		revokedAt  string
 	)
-	err := sc.Scan(&device.ID, &device.Secret, &device.Name, &device.PublicKey,
-		&device.MeshIP, &device.Platform, &available, &enrolledAt, &lastSeen)
+	err := sc.Scan(&device.ID, &device.Secret, &device.Name, &device.PublicKey, &device.SignPublicKey,
+		&device.MeshIP, &device.Platform, &available, &enrolledAt, &lastSeen, &revokedAt, &legacy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return coordinator.Device{}, false, nil
 	}
@@ -189,9 +271,32 @@ func scanDevice(sc scanner) (coordinator.Device, bool, error) {
 		return coordinator.Device{}, false, err
 	}
 	device.Available = available != 0
+	device.Legacy = legacy != 0
 	device.EnrolledAt = parseTime(enrolledAt)
 	device.LastSeen = parseTime(lastSeen)
+	device.RevokedAt = parseTime(revokedAt)
 	return device, true, nil
+}
+
+func scanInvitation(sc scanner) (coordinator.Invitation, bool, error) {
+	var (
+		invitation coordinator.Invitation
+		createdAt  string
+		expiresAt  string
+		revokedAt  string
+	)
+	err := sc.Scan(&invitation.ID, &invitation.CodeHash, &invitation.Label, &invitation.MeshIP,
+		&invitation.MaxUses, &invitation.Uses, &createdAt, &expiresAt, &revokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return coordinator.Invitation{}, false, nil
+	}
+	if err != nil {
+		return coordinator.Invitation{}, false, err
+	}
+	invitation.CreatedAt = parseTime(createdAt)
+	invitation.ExpiresAt = parseTime(expiresAt)
+	invitation.RevokedAt = parseTime(revokedAt)
+	return invitation, true, nil
 }
 
 func boolToInt(value bool) int {

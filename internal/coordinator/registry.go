@@ -3,11 +3,14 @@ package coordinator
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 	"sync"
 	"time"
+
+	"alceacore.ru/alceamesh/internal/identity"
 )
 
 const (
@@ -17,6 +20,19 @@ const (
 	SignalTTL      = 2 * time.Minute
 	signalBoxLimit = 32
 	maxCandidates  = 8
+
+	DefaultInviteUses = 1
+	inviteCodeBytes   = 16
+)
+
+var (
+	ErrInviteUnknown   = errors.New("invitation code is unknown")
+	ErrInviteExpired   = errors.New("invitation has expired")
+	ErrInviteRevoked   = errors.New("invitation was revoked")
+	ErrInviteExhausted = errors.New("invitation has no uses left")
+	ErrDeviceRevoked   = errors.New("device was revoked")
+	ErrUnknownDevice   = errors.New("unknown device")
+	ErrNotAttachable   = errors.New("device is not eligible for attaching")
 )
 
 type Options struct {
@@ -120,14 +136,16 @@ func (r *Registry) Enroll(req EnrollRequest) (*Device, error) {
 	}
 
 	device := Device{
-		ID:         id,
-		Secret:     secret,
-		Name:       name,
-		PublicKey:  strings.TrimSpace(req.PublicKey),
-		MeshIP:     meshIP,
-		Platform:   strings.TrimSpace(req.Platform),
-		EnrolledAt: now,
-		LastSeen:   now,
+		ID:            id,
+		Secret:        secret,
+		Name:          name,
+		PublicKey:     strings.TrimSpace(req.PublicKey),
+		SignPublicKey: strings.TrimSpace(req.SignPublicKey),
+		MeshIP:        meshIP,
+		Platform:      strings.TrimSpace(req.Platform),
+		EnrolledAt:    now,
+		LastSeen:      now,
+		Legacy:        true,
 	}
 	if err := r.store.PutDevice(device); err != nil {
 		return nil, err
@@ -140,6 +158,197 @@ func (r *Registry) Enroll(req EnrollRequest) (*Device, error) {
 	return &device, nil
 }
 
+func (r *Registry) CreateInvite(label, meshIP string, uses int, ttl time.Duration) (*Invitation, string, error) {
+	if meshIP != "" {
+		if _, err := netip.ParseAddr(meshIP); err != nil {
+			return nil, "", fmt.Errorf("invalid mesh ip %q: %w", meshIP, err)
+		}
+	}
+	if uses <= 0 {
+		uses = DefaultInviteUses
+	}
+
+	code, err := randomHex(inviteCodeBytes)
+	if err != nil {
+		return nil, "", err
+	}
+	id, err := randomHex(8)
+	if err != nil {
+		return nil, "", err
+	}
+
+	now := r.now()
+	invitation := Invitation{
+		ID:        id,
+		CodeHash:  HashInviteCode(code),
+		Label:     strings.TrimSpace(label),
+		MeshIP:    meshIP,
+		MaxUses:   uses,
+		CreatedAt: now,
+	}
+	if ttl > 0 {
+		invitation.ExpiresAt = now.Add(ttl)
+	}
+	if err := r.store.PutInvitation(invitation); err != nil {
+		return nil, "", err
+	}
+	return &invitation, code, nil
+}
+
+func (r *Registry) Invites() ([]Invitation, error) {
+	return r.store.ListInvitations()
+}
+
+func (r *Registry) RevokeInvite(id string) (*Invitation, error) {
+	invitation, ok, err := r.store.GetInvitation(strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrInviteUnknown
+	}
+	if invitation.Revoked() {
+		return &invitation, nil
+	}
+	invitation.RevokedAt = r.now()
+	if err := r.store.PutInvitation(invitation); err != nil {
+		return nil, err
+	}
+	return &invitation, nil
+}
+
+func (r *Registry) EnrollWithInvite(req InviteEnrollRequest) (*Device, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, fmt.Errorf("device name is required")
+	}
+	signKey, err := validateSignKey(req.SignPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	code := strings.TrimSpace(req.Code)
+	if code == "" {
+		return nil, fmt.Errorf("invitation code is required")
+	}
+
+	invitation, ok, err := r.store.GetInvitationByHash(HashInviteCode(code))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrInviteUnknown
+	}
+	now := r.now()
+	switch {
+	case invitation.Revoked():
+		return nil, ErrInviteRevoked
+	case invitation.Expired(now):
+		return nil, ErrInviteExpired
+	case invitation.Exhausted():
+		return nil, ErrInviteExhausted
+	}
+
+	meshIP, err := r.assignMeshIP(invitation.MeshIP)
+	if err != nil {
+		return nil, err
+	}
+	id, err := randomHex(8)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := randomHex(32)
+	if err != nil {
+		return nil, err
+	}
+
+	device := Device{
+		ID:            id,
+		Secret:        secret,
+		Name:          name,
+		PublicKey:     strings.TrimSpace(req.PublicKey),
+		SignPublicKey: signKey,
+		MeshIP:        meshIP,
+		Platform:      strings.TrimSpace(req.Platform),
+		EnrolledAt:    now,
+		LastSeen:      now,
+	}
+	if err := r.store.PutDevice(device); err != nil {
+		return nil, err
+	}
+
+	invitation.Uses++
+	if err := r.store.PutInvitation(invitation); err != nil {
+		return nil, err
+	}
+	return &device, nil
+}
+
+func (r *Registry) DeviceByID(id string) (*Device, error) {
+	device, ok, err := r.store.GetDevice(strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrUnknownDevice
+	}
+	return &device, nil
+}
+
+func (r *Registry) RevokeDevice(id string) (*Device, error) {
+	device, ok, err := r.store.GetDevice(strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrUnknownDevice
+	}
+	if device.Revoked() {
+		return &device, nil
+	}
+	device.RevokedAt = r.now()
+	if err := r.store.PutDevice(device); err != nil {
+		return nil, err
+	}
+	return &device, nil
+}
+
+func (r *Registry) AttachDevice(id, signPublicKey string) (*Device, error) {
+	signKey, err := validateSignKey(signPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	device, ok, err := r.store.GetDevice(strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrUnknownDevice
+	}
+	if device.Revoked() {
+		return nil, ErrDeviceRevoked
+	}
+	if !device.Attachable() {
+		return nil, ErrNotAttachable
+	}
+
+	device.SignPublicKey = signKey
+	if err := r.store.PutDevice(device); err != nil {
+		return nil, err
+	}
+	return &device, nil
+}
+
+func validateSignKey(value string) (string, error) {
+	signKey := strings.TrimSpace(value)
+	if signKey == "" {
+		return "", fmt.Errorf("signing public key is required")
+	}
+	if _, err := identity.ParsePublicKey(signKey); err != nil {
+		return "", err
+	}
+	return signKey, nil
+}
+
 func (r *Registry) Authenticate(secret string) (*Device, error) {
 	if secret == "" {
 		return nil, fmt.Errorf("missing device secret")
@@ -149,7 +358,10 @@ func (r *Registry) Authenticate(secret string) (*Device, error) {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("unknown device")
+		return nil, ErrUnknownDevice
+	}
+	if device.Revoked() {
+		return nil, ErrDeviceRevoked
 	}
 	return &device, nil
 }
@@ -194,6 +406,9 @@ func (r *Registry) Announce(req AnnounceRequest) (*Device, error) {
 	if err != nil {
 		return nil, err
 	}
+	if found && device.Revoked() {
+		return nil, ErrDeviceRevoked
+	}
 	if !found {
 		id, err := randomHex(8)
 		if err != nil {
@@ -203,7 +418,7 @@ func (r *Registry) Announce(req AnnounceRequest) (*Device, error) {
 		if err != nil {
 			return nil, err
 		}
-		device = Device{ID: id, Secret: secret, PublicKey: publicKey, EnrolledAt: now}
+		device = Device{ID: id, Secret: secret, PublicKey: publicKey, EnrolledAt: now, Legacy: true}
 	}
 
 	device.Name = name
@@ -247,6 +462,9 @@ func (r *Registry) Peers(availableOnly bool) ([]DeviceView, error) {
 	now := r.now()
 	views := make([]DeviceView, 0, len(devices))
 	for _, device := range devices {
+		if device.Revoked() {
+			continue
+		}
 		if availableOnly && !device.Available {
 			continue
 		}

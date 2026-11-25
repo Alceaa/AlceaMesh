@@ -6,15 +6,17 @@ import (
 )
 
 type MemoryStore struct {
-	mu      sync.RWMutex
-	devices map[string]Device
-	tokens  map[string]Token
+	mu          sync.RWMutex
+	devices     map[string]Device
+	tokens      map[string]Token
+	invitations map[string]Invitation
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		devices: make(map[string]Device),
-		tokens:  make(map[string]Token),
+		devices:     make(map[string]Device),
+		tokens:      make(map[string]Token),
+		invitations: make(map[string]Invitation),
 	}
 }
 
@@ -103,6 +105,47 @@ func (s *MemoryStore) ListTokens() ([]Token, error) {
 			return out[i].CreatedAt.Before(out[j].CreatedAt)
 		}
 		return out[i].Value < out[j].Value
+	})
+	return out, nil
+}
+
+func (s *MemoryStore) PutInvitation(invitation Invitation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.invitations[invitation.ID] = invitation
+	return nil
+}
+
+func (s *MemoryStore) GetInvitation(id string) (Invitation, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	invitation, ok := s.invitations[id]
+	return invitation, ok, nil
+}
+
+func (s *MemoryStore) GetInvitationByHash(hash string) (Invitation, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, invitation := range s.invitations {
+		if hash != "" && invitation.CodeHash == hash {
+			return invitation, true, nil
+		}
+	}
+	return Invitation{}, false, nil
+}
+
+func (s *MemoryStore) ListInvitations() ([]Invitation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Invitation, 0, len(s.invitations))
+	for _, invitation := range s.invitations {
+		out = append(out, invitation)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
 	})
 	return out, nil
 }

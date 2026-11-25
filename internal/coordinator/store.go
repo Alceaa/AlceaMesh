@@ -11,4 +11,9 @@ type Store interface {
 	PutToken(Token) error
 	GetToken(value string) (Token, bool, error)
 	ListTokens() ([]Token, error)
+
+	PutInvitation(Invitation) error
+	GetInvitation(id string) (Invitation, bool, error)
+	GetInvitationByHash(hash string) (Invitation, bool, error)
+	ListInvitations() ([]Invitation, error)
 }
