@@ -151,6 +151,66 @@ func TestDirFromExecutable(t *testing.T) {
 	}
 }
 
+func TestProtectedInstall(t *testing.T) {
+	t.Setenv("ProgramFiles", `C:\Program Files`)
+	t.Setenv("ProgramFiles(x86)", `C:\Program Files (x86)`)
+	t.Setenv("ProgramW6432", `C:\Program Files`)
+	t.Setenv("SystemRoot", `C:\Windows`)
+
+	protected := []string{
+		`C:\Program Files\AlceaMesh`,
+		`C:\Program Files (x86)\AlceaMesh`,
+		`C:\Program Files\AlceaMesh\sub`,
+		`C:\Windows\AlceaMesh`,
+	}
+	for _, dir := range protected {
+		if !protectedInstall(dir) {
+			t.Errorf("protectedInstall(%q) = false, want true", dir)
+		}
+	}
+
+	free := []string{
+		`D:\soft\AlceaMesh`,
+		`C:\Apps\AlceaMesh`,
+		`C:\ProgramData\AlceaMesh`,
+		"",
+	}
+	for _, dir := range free {
+		if protectedInstall(dir) {
+			t.Errorf("protectedInstall(%q) = true, want false", dir)
+		}
+	}
+
+	t.Setenv("ProgramFiles", `D:\Tools`)
+	if !protectedInstall(`D:\Tools\AlceaMesh`) {
+		t.Error("a custom ProgramFiles root must be honoured")
+	}
+}
+
+func TestDataDirScriptGrantsUsers(t *testing.T) {
+	script := DataDirScript(`D:\soft\AlceaMesh\data`)
+	for _, want := range []string{"icacls", `*S-1-5-32-545:(OI)(CI)M`, `D:\soft\AlceaMesh\data`, "New-Item"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script is missing %q: %s", want, script)
+		}
+	}
+}
+
+func TestPlanMentionsTheDataFolderStep(t *testing.T) {
+	t.Setenv("ProgramFiles", `C:\Program Files`)
+	t.Setenv("ProgramW6432", `C:\Program Files`)
+
+	free := strings.Join(Plan(Options{Dir: `D:\soft\AlceaMesh`}), "\n")
+	if !strings.Contains(free, "папке data запись обычному пользователю") {
+		t.Errorf("the plan must mention the data folder rights: %s", free)
+	}
+
+	protectedPlan := strings.Join(Plan(Options{Dir: `C:\Program Files\AlceaMesh`}), "\n")
+	if strings.Contains(protectedPlan, "запись обычному пользователю") {
+		t.Errorf("a system folder must not promise a rights change: %s", protectedPlan)
+	}
+}
+
 func TestDataDirsCoverPortableAndSystemPlaces(t *testing.T) {
 	t.Setenv("AppData", `C:\Users\test\AppData\Roaming`)
 	t.Setenv("LocalAppData", `C:\Users\test\AppData\Local`)

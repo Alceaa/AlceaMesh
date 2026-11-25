@@ -10,6 +10,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"alceacore.ru/alceamesh/internal/datadir"
 	"alceacore.ru/alceamesh/internal/setup"
 	"alceacore.ru/alceamesh/internal/version"
 )
@@ -70,7 +71,7 @@ func main() {
 			Handler: state,
 		},
 		Windows: application.WindowsOptions{
-			WebviewUserDataPath: webviewDataDir(options.Dir),
+			WebviewUserDataPath: webviewDataDir(),
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
@@ -164,15 +165,18 @@ func writeLog(line string) {
 	fmt.Fprintln(file, line)
 }
 
-func webviewDataDir(target string) string {
+func webviewDataDir() string {
 	candidates := make([]string, 0, 2)
-	if strings.TrimSpace(target) != "" {
-		candidates = append(candidates, filepath.Join(target, "data", "webview-setup"))
+	if custom := strings.TrimSpace(os.Getenv("ALCEAMESH_SETUP_DATA_DIR")); custom != "" && filepath.IsAbs(custom) {
+		candidates = append(candidates, custom)
+	}
+	if base := strings.TrimSpace(os.Getenv("LocalAppData")); base != "" {
+		candidates = append(candidates, filepath.Join(base, "AlceaMesh-Setup", "webview"))
 	}
 	candidates = append(candidates, filepath.Join(os.TempDir(), "AlceaMesh-setup-webview"))
 
 	for _, candidate := range candidates {
-		if err := os.MkdirAll(candidate, 0o755); err == nil {
+		if datadir.IsWritable(candidate) {
 			return candidate
 		}
 	}

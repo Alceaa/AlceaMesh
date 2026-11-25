@@ -59,6 +59,13 @@ foreach ($folder in $folders) {
 `
 }
 
+func DataDirScript(dataDir string) string {
+	return fmt.Sprintf(`$dataDir = '%s'
+if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Force -Path $dataDir | Out-Null }
+icacls $dataDir /grant '*S-1-5-32-545:(OI)(CI)M' /T /C | Out-Null
+`, quote(dataDir))
+}
+
 func UninstallRegistryValues(dir, version string) map[string]string {
 	exe := filepath.Join(dir, "alceamesh.exe")
 	uninstall := `"` + filepath.Join(dir, uninstallExe) + `"`

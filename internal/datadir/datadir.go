@@ -77,3 +77,7 @@ func usable(dir string) bool {
 	_ = os.Remove(name)
 	return true
 }
+
+func IsWritable(dir string) bool {
+	return usable(dir)
+}

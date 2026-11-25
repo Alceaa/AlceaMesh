@@ -96,6 +96,10 @@ func Plan(options Options) []string {
 		steps = append(steps, fmt.Sprintf("Удалить прежнюю копию программы из %s", strings.Join(stale, ", ")))
 	}
 	steps = append(steps, "Убрать данные, оставшиеся в системных папках от прежних версий")
+	if !protectedInstall(options.Dir) {
+		steps = append(steps, "Разрешить папке data запись обычному пользователю (настройки лежат рядом с программой)")
+	}
+	steps = append(steps, "Создать папку для настроек и кеша интерфейса")
 	if options.Service {
 		steps = append(steps, "Установить службу AlceaMesh (нужна для VPN) и запустить её")
 	}
@@ -165,6 +169,30 @@ func Install(payload fs.FS, selfPath string, options Options, log func(string)) 
 			return nil
 		}},
 	)
+
+	tasks = append(tasks, step{
+		title: "Готовлю папку для настроек",
+		run: func() error {
+			dataDir := filepath.Join(options.Dir, "data")
+			if err := os.MkdirAll(dataDir, 0o755); err != nil {
+				return err
+			}
+			stale := filepath.Join(dataDir, "webview-setup")
+			if dirExists(stale) {
+				if err := os.RemoveAll(stale); err != nil {
+					report("Не удалось убрать старый кеш установщика: %v", err)
+				} else {
+					report("Убрал старый кеш установщика из папки установки")
+				}
+			}
+			if protectedInstall(options.Dir) {
+				report("Папка установки системная: приложение будет хранить настройки в профиле пользователя")
+				return nil
+			}
+			_, err := RunPowerShell(DataDirScript(dataDir))
+			return err
+		},
+	})
 
 	if options.Service {
 		tasks = append(tasks, step{
@@ -328,6 +356,30 @@ func looksLikeOurInstall(dir string) bool {
 		}
 	}
 	return false
+}
+
+func protectedInstall(dir string) bool {
+	cleaned := strings.ToLower(filepath.Clean(strings.TrimSpace(dir)))
+	if cleaned == "" || cleaned == "." {
+		return false
+	}
+	roots := []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramW6432"), `C:\Program Files`}
+	for _, root := range roots {
+		root = strings.ToLower(strings.TrimSpace(root))
+		if root == "" {
+			continue
+		}
+		if cleaned == root || strings.HasPrefix(cleaned, root+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	windows := strings.ToLower(strings.TrimSpace(os.Getenv("SystemRoot")))
+	return windows != "" && strings.HasPrefix(cleaned, windows+string(os.PathSeparator))
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func removePreviousInstall(stale []string, report func(string, ...any)) {

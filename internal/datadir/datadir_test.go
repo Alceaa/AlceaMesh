@@ -67,6 +67,21 @@ func TestResolvePrefersFolderNextToTheExecutable(t *testing.T) {
 	}
 }
 
+func TestIsWritable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "fresh")
+	if !IsWritable(dir) {
+		t.Fatalf("IsWritable(%q) = false, want true", dir)
+	}
+
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if IsWritable(blocker) {
+		t.Error("a path that is a file must not count as writable")
+	}
+}
+
 func TestLegacyDirIsAbsoluteOrEmpty(t *testing.T) {
 	if legacy := LegacyDir(); legacy != "" && !filepath.IsAbs(legacy) {
 		t.Errorf("LegacyDir() = %q, want an absolute path", legacy)
