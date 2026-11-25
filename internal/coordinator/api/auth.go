@@ -148,3 +148,15 @@ func (s *Server) isAdmin(r *http.Request) bool {
 	token, ok := s.bearer(r)
 	return ok && s.AdminKey != "" && token == s.AdminKey
 }
+
+func writeRegistryAuthError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, coordinator.ErrDeviceRevoked):
+		writeAuthError(w, newAuthError(ReasonRevoked, "%v", err))
+		return true
+	case errors.Is(err, coordinator.ErrUnknownDevice):
+		writeAuthError(w, newAuthError(ReasonUnknownDevice, "%v", err))
+		return true
+	}
+	return false
+}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"alceacore.ru/alceamesh/internal/coordinator"
+	"alceacore.ru/alceamesh/internal/identity"
 )
 
 type Client struct {
@@ -98,13 +99,89 @@ func (c *Client) Heartbeat() error {
 }
 
 func (c *Client) Devices() ([]coordinator.DeviceView, error) {
+	return c.devices(false)
+}
+
+func (c *Client) DevicesPending() ([]coordinator.DeviceView, error) {
+	return c.devices(true)
+}
+
+func (c *Client) devices(pending bool) ([]coordinator.DeviceView, error) {
+	path := "/v1/devices"
+	if pending {
+		path += "?pending=1"
+	}
 	var out struct {
 		Devices []coordinator.DeviceView `json:"devices"`
 	}
-	if err := c.do(http.MethodGet, "/v1/devices", nil, &out); err != nil {
+	if err := c.do(http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Devices, nil
+}
+
+func (c *Client) EnrollWithInvite(code, name, platform, publicKey, signPublicKey string, signer *identity.Key) (*EnrollResult, error) {
+	payload := identity.CanonicalEnroll(code, name, platform, publicKey, signPublicKey)
+	body := map[string]string{
+		"invite":          code,
+		"name":            name,
+		"platform":        platform,
+		"public_key":      publicKey,
+		"sign_public_key": signPublicKey,
+		"signature":       identity.SignMessage(signer, payload),
+	}
+	var out EnrollResult
+	if err := c.do(http.MethodPost, "/v1/enroll", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) CreateInvite(label, meshIP string, uses int, ttl time.Duration) (*coordinator.Invitation, string, error) {
+	body := map[string]any{
+		"label":       label,
+		"mesh_ip":     meshIP,
+		"uses":        uses,
+		"ttl_seconds": int(ttl.Seconds()),
+	}
+	var out struct {
+		Invitation coordinator.Invitation `json:"invitation"`
+		Code       string                 `json:"code"`
+	}
+	if err := c.do(http.MethodPost, "/v1/invites", body, &out); err != nil {
+		return nil, "", err
+	}
+	return &out.Invitation, out.Code, nil
+}
+
+func (c *Client) Invites() ([]coordinator.Invitation, error) {
+	var out struct {
+		Invitations []coordinator.Invitation `json:"invitations"`
+	}
+	if err := c.do(http.MethodGet, "/v1/invites", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Invitations, nil
+}
+
+func (c *Client) RevokeInvite(id string) (*coordinator.Invitation, error) {
+	var out struct {
+		Invitation coordinator.Invitation `json:"invitation"`
+	}
+	if err := c.do(http.MethodPost, "/v1/invites/"+url.PathEscape(id)+"/revoke", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out.Invitation, nil
+}
+
+func (c *Client) RevokeDevice(id string) (*coordinator.Device, error) {
+	var out struct {
+		Device coordinator.Device `json:"device"`
+	}
+	if err := c.do(http.MethodPost, "/v1/devices/"+url.PathEscape(id)+"/revoke", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out.Device, nil
 }
 
 func (c *Client) CreateToken(label, meshIP string, ttl time.Duration) (*coordinator.Token, error) {

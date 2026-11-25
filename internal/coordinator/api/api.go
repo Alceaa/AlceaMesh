@@ -34,6 +34,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /v1/claim/challenge", s.handleClaimChallenge)
 	mux.HandleFunc("POST /v1/claim", s.handleClaim)
+	mux.HandleFunc("POST /v1/invites", s.handleCreateInvite)
+	mux.HandleFunc("GET /v1/invites", s.handleListInvites)
+	mux.HandleFunc("POST /v1/invites/{id}/revoke", s.handleRevokeInvite)
+	mux.HandleFunc("POST /v1/devices/{id}/revoke", s.handleRevokeDevice)
 	mux.HandleFunc("POST /v1/heartbeat", s.withSignature(s.handleHeartbeat))
 	mux.HandleFunc("GET /v1/devices", s.withSignature(s.handleListDevices))
 	mux.HandleFunc("DELETE /v1/devices/{id}", s.withSignature(s.handleDeleteDevice))
@@ -55,10 +59,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 }
 
 type enrollRequest struct {
-	Token     string `json:"token"`
-	Name      string `json:"name"`
-	PublicKey string `json:"public_key"`
-	Platform  string `json:"platform"`
+	Token         string `json:"token"`
+	Invite        string `json:"invite"`
+	Name          string `json:"name"`
+	PublicKey     string `json:"public_key"`
+	SignPublicKey string `json:"sign_public_key"`
+	Signature     string `json:"signature"`
+	Platform      string `json:"platform"`
 }
 
 type enrollResponse struct {
@@ -72,11 +79,24 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if req.Invite != "" {
+		s.handleInviteEnroll(w, r, inviteEnrollRequest{
+			Invite:        req.Invite,
+			Name:          req.Name,
+			Platform:      req.Platform,
+			PublicKey:     req.PublicKey,
+			SignPublicKey: req.SignPublicKey,
+			Signature:     req.Signature,
+		})
+		return
+	}
+
 	device, err := s.Registry.Enroll(coordinator.EnrollRequest{
-		Token:     req.Token,
-		Name:      req.Name,
-		PublicKey: req.PublicKey,
-		Platform:  req.Platform,
+		Token:         req.Token,
+		Name:          req.Name,
+		PublicKey:     req.PublicKey,
+		SignPublicKey: req.SignPublicKey,
+		Platform:      req.Platform,
 	})
 	if err != nil {
 		writeError(w, http.StatusForbidden, err)
@@ -93,6 +113,9 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	device, err := s.Registry.Heartbeat(secret)
 	if err != nil {
+		if writeRegistryAuthError(w, err) {
+			return
+		}
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
@@ -108,6 +131,15 @@ func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	if r.URL.Query().Get("pending") == "1" {
+		pending := make([]coordinator.DeviceView, 0, len(devices))
+		for _, device := range devices {
+			if device.Attachable() {
+				pending = append(pending, device)
+			}
+		}
+		devices = pending
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": devices})
 }
@@ -184,6 +216,9 @@ func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
 		Available: req.Available,
 	})
 	if err != nil {
+		if writeRegistryAuthError(w, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

@@ -4,12 +4,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"alceacore.ru/alceamesh/internal/client"
 	"alceacore.ru/alceamesh/internal/coordclient"
+	"alceacore.ru/alceamesh/internal/coordinator"
+	"alceacore.ru/alceamesh/internal/datadir"
+	"alceacore.ru/alceamesh/internal/identity"
 	"alceacore.ru/alceamesh/internal/ipc"
 	"alceacore.ru/alceamesh/internal/naming"
 	buildversion "alceacore.ru/alceamesh/internal/version"
@@ -249,9 +253,16 @@ func (f *coordFlags) client(auth string) (*coordclient.Client, error) {
 	return coordclient.New(f.server, auth), nil
 }
 
+func (f *coordFlags) adminClient() (*coordclient.Client, error) {
+	if f.adminKey == "" {
+		return nil, fmt.Errorf("admin key is required (--admin-key or ALCEAMESH_ADMIN_KEY)")
+	}
+	return f.client(f.adminKey)
+}
+
 func cmdCoord(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: alceamesh-cli coord <ping|version|devices|enroll|token|tokens|delete> [flags]")
+		return fmt.Errorf("usage: alceamesh-cli coord <ping|version|devices|enroll|invite|invites|revoke|token|tokens|delete> [flags]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -263,6 +274,12 @@ func cmdCoord(args []string) error {
 		return cmdCoordDevices(rest)
 	case "enroll":
 		return cmdCoordEnroll(rest)
+	case "invite":
+		return cmdCoordInvite(rest)
+	case "invites":
+		return cmdCoordInvites(rest)
+	case "revoke":
+		return cmdCoordRevoke(rest)
 	case "token":
 		return cmdCoordToken(rest)
 	case "tokens":
@@ -309,6 +326,7 @@ func cmdCoordVersion(args []string) error {
 
 func cmdCoordDevices(args []string) error {
 	fs, flags := newCoordFlagSet("coord devices")
+	pending := fs.Bool("pending", false, "show only devices that still need a signing key (attach)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -320,7 +338,12 @@ func cmdCoordDevices(args []string) error {
 	if err != nil {
 		return err
 	}
-	devices, err := c.Devices()
+	var devices []coordinator.DeviceView
+	if *pending {
+		devices, err = c.DevicesPending()
+	} else {
+		devices, err = c.Devices()
+	}
 	if err != nil {
 		return err
 	}
@@ -328,33 +351,163 @@ func cmdCoordDevices(args []string) error {
 		fmt.Println("no devices")
 		return nil
 	}
-	fmt.Printf("%-20s %-16s %-8s %s\n", "NAME", "MESH IP", "STATE", "PLATFORM")
+	fmt.Printf("%-20s %-16s %-8s %-9s %s\n", "NAME", "MESH IP", "STATE", "SIGNING", "PLATFORM")
 	for _, device := range devices {
 		state := "offline"
 		if device.Online {
 			state = "online"
 		}
-		fmt.Printf("%-20s %-16s %-8s %s\n", device.Name, device.MeshIP, state, device.Platform)
+		signing := "ok"
+		switch {
+		case device.Revoked():
+			signing = "revoked"
+		case device.SignPublicKey == "":
+			signing = "pending"
+		}
+		fmt.Printf("%-20s %-16s %-8s %-9s %s\n", device.Name, device.MeshIP, state, signing, device.Platform)
 	}
+	return nil
+}
+
+func cmdCoordInvite(args []string) error {
+	fs, flags := newCoordFlagSet("coord invite")
+	label := fs.String("label", "", "who the invitation is for")
+	meshIP := fs.String("mesh-ip", "", "pin the new device to this mesh IP")
+	uses := fs.Int("uses", 1, "how many devices may use it")
+	ttlHours := fs.Int("ttl-hours", 0, "lifetime in hours (0 = never expires)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := flags.adminClient()
+	if err != nil {
+		return err
+	}
+	var ttl time.Duration
+	if *ttlHours > 0 {
+		ttl = time.Duration(*ttlHours) * time.Hour
+	}
+	invitation, code, err := c.CreateInvite(*label, *meshIP, *uses, ttl)
+	if err != nil {
+		return err
+	}
+	fmt.Println(code)
+	fmt.Fprintf(os.Stderr, "id: %s\n", invitation.ID)
+	if !invitation.ExpiresAt.IsZero() {
+		fmt.Fprintf(os.Stderr, "expires: %s\n", invitation.ExpiresAt.Local().Format(time.RFC3339))
+	}
+	fmt.Fprintf(os.Stderr, "uses: %d\n", invitation.MaxUses)
+	fmt.Fprintln(os.Stderr, "передайте код человеку: он вводится в приложении при первом подключении, повторно код не показывается.")
+	return nil
+}
+
+func cmdCoordInvites(args []string) error {
+	fs, flags := newCoordFlagSet("coord invites")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := flags.adminClient()
+	if err != nil {
+		return err
+	}
+	invitations, err := c.Invites()
+	if err != nil {
+		return err
+	}
+	if len(invitations) == 0 {
+		fmt.Println("no invitations")
+		return nil
+	}
+	fmt.Printf("%-18s %-16s %-9s %-8s %s\n", "ID", "LABEL", "STATE", "USES", "EXPIRES")
+	for _, invitation := range invitations {
+		state := "active"
+		switch {
+		case invitation.Revoked():
+			state = "revoked"
+		case invitation.Expired(time.Now()):
+			state = "expired"
+		case invitation.Exhausted():
+			state = "used up"
+		}
+		expires := "never"
+		if !invitation.ExpiresAt.IsZero() {
+			expires = invitation.ExpiresAt.Local().Format("2006-01-02 15:04")
+		}
+		fmt.Printf("%-18s %-16s %-9s %d/%-6d %s\n", invitation.ID, invitation.Label, state, invitation.Uses, invitation.MaxUses, expires)
+	}
+	return nil
+}
+
+func cmdCoordRevoke(args []string) error {
+	fs, flags := newCoordFlagSet("coord revoke")
+	invite := fs.String("invite", "", "revoke this invitation by id")
+	device := fs.String("device", "", "revoke this device by id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if (*invite == "") == (*device == "") {
+		return fmt.Errorf("usage: alceamesh-cli coord revoke --invite ID | --device ID")
+	}
+	c, err := flags.adminClient()
+	if err != nil {
+		return err
+	}
+	if *invite != "" {
+		invitation, err := c.RevokeInvite(*invite)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("invitation %q revoked\n", invitation.ID)
+		return nil
+	}
+	revoked, err := c.RevokeDevice(*device)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("device %q revoked: it can no longer announce itself, hear heartbeats or sign requests\n", revoked.Name)
 	return nil
 }
 
 func cmdCoordEnroll(args []string) error {
 	fs, flags := newCoordFlagSet("coord enroll")
-	token := fs.String("token", "", "enrollment token (required)")
+	token := fs.String("token", "", "enrollment token (legacy scheme)")
+	invite := fs.String("invite", "", "invitation code (new scheme)")
 	name := fs.String("name", "", "device name (required)")
 	platform := fs.String("platform", runtime.GOOS, "device platform")
 	publicKey := fs.String("public-key", "", "WireGuard public key")
+	signDir := fs.String("identity-dir", "", "where to keep the device signing key (default: data folder)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *token == "" || *name == "" {
-		return fmt.Errorf("usage: alceamesh-cli coord enroll --token T --name NAME [--platform P] [--public-key PK]")
+	if *name == "" || (*token == "" && *invite == "") {
+		return fmt.Errorf("usage: alceamesh-cli coord enroll (--token T | --invite CODE) --name NAME [--platform P] [--public-key PK] [--identity-dir DIR]")
 	}
 	c, err := flags.client("")
 	if err != nil {
 		return err
 	}
+
+	if *invite != "" {
+		dir := *signDir
+		if dir == "" {
+			dir = filepath.Join(datadir.Dir(), "identity")
+		}
+		key, err := identity.LoadOrCreate(dir)
+		if err != nil {
+			return err
+		}
+		result, err := c.EnrollWithInvite(*invite, *name, *platform, *publicKey, key.PublicKey(), key)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("device %q enrolled by invitation\n", result.Device.Name)
+		fmt.Printf("  id:          %s\n", result.Device.ID)
+		fmt.Printf("  mesh ip:     %s\n", result.Device.MeshIP)
+		fmt.Printf("  signing key: %s\n", result.Device.SignPublicKey)
+		fmt.Printf("  key folder:  %s\n", dir)
+		fmt.Printf("  secret:      %s\n", result.Secret)
+		return nil
+	}
+
 	result, err := c.Enroll(*token, *name, *publicKey, *platform)
 	if err != nil {
 		return err
