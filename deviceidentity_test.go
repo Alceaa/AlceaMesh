@@ -187,3 +187,88 @@ func TestCoordinatorEndpointsPreferTheMesh(t *testing.T) {
 		t.Errorf("custom endpoints = %+v", custom)
 	}
 }
+
+func TestJoinWithInvite(t *testing.T) {
+	registry := newTestRegistry(t)
+	_, code, err := registry.CreateInvite("тест", "", 1, time.Hour)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	server := httptest.NewServer((&api.Server{Registry: registry, AdminKey: "test", Version: "test"}).Handler())
+	defer server.Close()
+
+	client, err := coordclient.NewClient(coordclient.Options{
+		Endpoints: []coordclient.Endpoint{{Name: "test", BaseURL: server.URL}},
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	private, err := identity.NewEphemeralKey()
+	if err != nil {
+		t.Fatalf("NewEphemeralKey: %v", err)
+	}
+	stored := &settings.Settings{
+		DeviceName: "Новый ноут",
+		ConfigText: confText(t, base64.StdEncoding.EncodeToString(private.Bytes())),
+	}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate: %v", err)
+	}
+
+	result, err := joinWithInvite(client, stored, key, code)
+	if err != nil {
+		t.Fatalf("joinWithInvite: %v", err)
+	}
+	if result.Device.ID == "" || result.Secret == "" {
+		t.Fatalf("enrollment result = %+v", result)
+	}
+	if result.Device.SignPublicKey != key.PublicKey() {
+		t.Errorf("sign key = %q, want %q", result.Device.SignPublicKey, key.PublicKey())
+	}
+	if result.Device.Name != "Новый ноут" {
+		t.Errorf("name = %q", result.Device.Name)
+	}
+
+	device, err := registry.DeviceByID(result.Device.ID)
+	if err != nil {
+		t.Fatalf("DeviceByID: %v", err)
+	}
+	if device.SignPublicKey == "" || device.Legacy {
+		t.Errorf("the registered device must carry a signing key and not be legacy: %+v", device)
+	}
+
+	if _, err := joinWithInvite(client, stored, key, code); err == nil {
+		t.Error("reusing the invitation must fail")
+	}
+	if _, err := joinWithInvite(client, &settings.Settings{}, key, code); err == nil {
+		t.Error("joining without a config must fail")
+	}
+}
+
+func TestSigningState(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored *settings.Settings
+		device *coordinator.Device
+		want   string
+	}{
+		{"без настроек", nil, nil, signingUnregistered},
+		{"нет устройства", &settings.Settings{}, nil, signingUnregistered},
+		{"ожидает привязки", &settings.Settings{DeviceID: "d1"}, nil, signingPending},
+		{"привязано по настройкам", &settings.Settings{DeviceID: "d1", SignPublicKey: "key"}, nil, signingAttached},
+		{"координатор подтверждает", &settings.Settings{DeviceID: "d1"}, &coordinator.Device{ID: "d1", SignPublicKey: "key"}, signingAttached},
+		{"координатор: ещё нет ключа", &settings.Settings{DeviceID: "d1"}, &coordinator.Device{ID: "d1"}, signingPending},
+		{"отозвано", &settings.Settings{DeviceID: "d1", SignPublicKey: "key"},
+			&coordinator.Device{ID: "d1", SignPublicKey: "key", RevokedAt: time.Now()}, signingRevoked},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			if got := signingState(item.stored, item.device); got != item.want {
+				t.Errorf("signingState = %q, want %q", got, item.want)
+			}
+		})
+	}
+}

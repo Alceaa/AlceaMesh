@@ -12,6 +12,13 @@ type Props = {
   onNotify: Notify;
 };
 
+const signingLabels: Record<string, string> = {
+  attached: "Привязано",
+  pending: "Ожидает привязки",
+  revoked: "Отозвано",
+  unregistered: "Не зарегистрировано",
+};
+
 export default function SettingsView({ status, network, transport, onRefresh, onNotify }: Props) {
   const [name, setName] = useState(network?.identity.name ?? "");
   const [limit, setLimit] = useState("0");
@@ -22,6 +29,8 @@ export default function SettingsView({ status, network, transport, onRefresh, on
   const [tray, setTray] = useState(false);
   const [version, setVersion] = useState("");
   const [saving, setSaving] = useState(false);
+  const [invite, setInvite] = useState("");
+  const [joining, setJoining] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -110,6 +119,8 @@ export default function SettingsView({ status, network, transport, onRefresh, on
   }, [limitKBps]);
 
   const configured = status?.configured ?? false;
+  const signing = network?.signing || "unregistered";
+  const signingLabel = signingLabels[signing] ?? "—";
 
   const saveName = async () => {
     setSaving(true);
@@ -121,6 +132,20 @@ export default function SettingsView({ status, network, transport, onRefresh, on
       onNotify("error", "Настройки", messageOf(error));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const joinNetwork = async () => {
+    setJoining(true);
+    try {
+      const message = await mesh.joinWithInvite(invite);
+      setInvite("");
+      await onRefresh(true);
+      onNotify("ok", "Сеть Alcea", message);
+    } catch (error) {
+      onNotify("error", "Подключение к сети", messageOf(error));
+    } finally {
+      setJoining(false);
     }
   };
 
@@ -212,6 +237,46 @@ export default function SettingsView({ status, network, transport, onRefresh, on
         <button className="btn" disabled={saving} onClick={() => void saveName()}>
           Сохранить имя
         </button>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Доступ к сети</h2>
+        </div>
+        <Card>
+          <div className="card-body">
+            <div className="row">
+              <span className="label">Подпись устройства</span>
+              <span className="value">{signingLabel}</span>
+            </div>
+            <div className="row">
+              <span className="label">Номер в сети</span>
+              <span className="value mono">{network?.deviceID || "—"}</span>
+            </div>
+          </div>
+          {signing !== "attached" ? (
+            <div className="card-foot">
+              <div className="field">
+                <label>Код приглашения</label>
+                <input
+                  value={invite}
+                  onChange={(event) => setInvite(event.target.value)}
+                  placeholder="например, 6721245a6369d1a9e4ffae099b5966cf"
+                />
+              </div>
+              <button className="btn primary" disabled={joining || invite.trim() === ""} onClick={() => void joinNetwork()}>
+                {joining ? "Подключаюсь…" : "Подключиться к сети"}
+              </button>
+            </div>
+          ) : null}
+        </Card>
+        <div className="hint">
+          {signing === "attached"
+            ? "Устройство подтверждает свои запросы ключом подписи — это ключ, который не покидает компьютер."
+            : signing === "revoked"
+              ? "Владелец сети отозвал это устройство: попросите новый код приглашения и подключитесь заново."
+              : "Возьмите код приглашения у владельца сети — он выдаёт их командой alceamesh-cli coord invite."}
+        </div>
       </section>
 
       <section className="section">

@@ -13,6 +13,8 @@ const fileName = "settings.json"
 
 type Settings struct {
 	DeviceID       string `json:"device_id,omitempty"`
+	DeviceSecret   string `json:"device_secret,omitempty"`
+	SignPublicKey  string `json:"sign_public_key,omitempty"`
 	DeviceName     string `json:"device_name,omitempty"`
 	TunnelName     string `json:"tunnel_name,omitempty"`
 	ConfigText     string `json:"config_text,omitempty"`

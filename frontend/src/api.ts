@@ -54,6 +54,7 @@ export const mesh = {
   network: (): Promise<NetworkView> => DeviceService.Network(),
   setAccept: (accept: boolean): Promise<void> => DeviceService.SetAccept(accept),
   setName: (name: string): Promise<void> => DeviceService.SetName(name),
+  joinWithInvite: (code: string): Promise<string> => DeviceService.JoinWithInvite(code),
 
   transport: (): Promise<NetworkTransport> => PeerService.Transport(),
   connectPeer: (peerKey: string, name: string, meshIP: string): Promise<void> =>

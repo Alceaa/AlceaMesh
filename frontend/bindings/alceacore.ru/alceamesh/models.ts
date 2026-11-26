@@ -57,6 +57,8 @@ export interface NetworkView {
     "coordinator": string;
     "reachable": boolean;
     "message": string;
+    "deviceID": string;
+    "signing": string;
     "identity": Identity;
     "devices": DeviceView[] | null;
 }

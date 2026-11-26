@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"runtime"
 	"sort"
@@ -8,6 +9,7 @@ import (
 
 	"alceacore.ru/alceamesh/internal/coordclient"
 	"alceacore.ru/alceamesh/internal/coordinator"
+	"alceacore.ru/alceamesh/internal/identity"
 	"alceacore.ru/alceamesh/internal/settings"
 	"alceacore.ru/alceamesh/internal/wgconf"
 )
@@ -43,9 +45,18 @@ type NetworkView struct {
 	Coordinator string       `json:"coordinator"`
 	Reachable   bool         `json:"reachable"`
 	Message     string       `json:"message"`
+	DeviceID    string       `json:"deviceID"`
+	Signing     string       `json:"signing"`
 	Identity    Identity     `json:"identity"`
 	Devices     []DeviceView `json:"devices"`
 }
+
+const (
+	signingUnregistered = "unregistered"
+	signingPending      = "pending"
+	signingAttached     = "attached"
+	signingRevoked      = "revoked"
+)
 
 func (s *DeviceService) Network() (NetworkView, error) {
 	stored, err := settings.Load()
@@ -53,13 +64,14 @@ func (s *DeviceService) Network() (NetworkView, error) {
 		return NetworkView{}, err
 	}
 
-	view := NetworkView{Coordinator: coordinatorURL(), Identity: identityOf(stored)}
+	view := NetworkView{Coordinator: coordinatorURL(), Identity: identityOf(stored), Signing: signingUnregistered}
 	if view.Identity.PublicKey == "" {
 		view.Message = "Импортируйте конфигурацию, чтобы войти в сеть."
 		return view, nil
 	}
 	if !vpnRunning(stored) {
 		view.Message = "Включите VPN, чтобы увидеть устройства сети."
+		view.Signing = signingState(stored, nil)
 		return view, nil
 	}
 
@@ -84,6 +96,8 @@ func (s *DeviceService) Network() (NetworkView, error) {
 	view.Coordinator = client.ActiveEndpoint().BaseURL
 
 	self, stored = s.syncIdentity(client, stored, self)
+	view.DeviceID = self.ID
+	view.Signing = signingState(stored, self)
 	if self.Revoked() {
 		view.Message = "Это устройство отозвано владельцем сети. Обратитесь к нему за новой регистрацией."
 		view.Devices = nil
@@ -122,6 +136,10 @@ func (s *DeviceService) syncIdentity(client *coordclient.Client, stored *setting
 	}
 
 	if self.SignPublicKey != "" || self.Revoked() {
+		if self.SignPublicKey != "" && stored.SignPublicKey != self.SignPublicKey {
+			stored.SignPublicKey = self.SignPublicKey
+			_ = stored.Save()
+		}
 		return self, stored
 	}
 
@@ -133,7 +151,31 @@ func (s *DeviceService) syncIdentity(client *coordclient.Client, stored *setting
 	if err != nil {
 		return self, stored
 	}
+	if attached.SignPublicKey != stored.SignPublicKey {
+		stored.SignPublicKey = attached.SignPublicKey
+		_ = stored.Save()
+	}
 	return attached, stored
+}
+
+func signingState(stored *settings.Settings, device *coordinator.Device) string {
+	if device != nil {
+		switch {
+		case device.Revoked():
+			return signingRevoked
+		case strings.TrimSpace(device.SignPublicKey) != "":
+			return signingAttached
+		default:
+			return signingPending
+		}
+	}
+	if stored == nil || strings.TrimSpace(stored.DeviceID) == "" {
+		return signingUnregistered
+	}
+	if strings.TrimSpace(stored.SignPublicKey) != "" {
+		return signingAttached
+	}
+	return signingPending
 }
 
 func visibleDevice(peer coordinator.DeviceView, self bool) bool {
@@ -166,6 +208,47 @@ func (s *DeviceService) SetName(name string) error {
 	}
 	stored.DeviceName = strings.TrimSpace(name)
 	return friendlyError(stored.Save(), fallbackSettings)
+}
+
+func (s *DeviceService) JoinWithInvite(code string) (string, error) {
+	invite := strings.TrimSpace(code)
+	if invite == "" {
+		return "", errors.New("введите код приглашения")
+	}
+
+	stored, err := settings.Load()
+	if err != nil {
+		return "", friendlyError(err, fallbackSettings)
+	}
+	key, err := deviceKey()
+	if err != nil {
+		return "", friendlyError(err, fallbackSettings)
+	}
+	client, err := newCoordinatorClient(nil)
+	if err != nil {
+		return "", friendlyError(err, fallbackNetwork)
+	}
+
+	result, err := joinWithInvite(client, stored, key, invite)
+	if err != nil {
+		return "", friendlyError(err, fallbackNetwork)
+	}
+
+	stored.DeviceID = result.Device.ID
+	stored.DeviceSecret = result.Secret
+	stored.SignPublicKey = key.PublicKey()
+	if err := stored.Save(); err != nil {
+		return "", friendlyError(err, fallbackSettings)
+	}
+	return "Устройство подключено к сети: " + result.Device.Name + " · " + result.Device.MeshIP, nil
+}
+
+func joinWithInvite(client *coordclient.Client, stored *settings.Settings, key *identity.Key, code string) (*coordclient.EnrollResult, error) {
+	_, _, publicKey, err := wireGuardKeys(stored)
+	if err != nil {
+		return nil, errors.New("сначала импортируйте конфигурацию WireGuard — без неё подключаться нечем")
+	}
+	return client.EnrollWithInvite(code, identityOf(stored).Name, runtime.GOOS, publicKey, key.PublicKey(), key)
 }
 
 func identityOf(stored *settings.Settings) Identity {
