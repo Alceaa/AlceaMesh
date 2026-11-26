@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"unicode"
+
+	"alceacore.ru/alceamesh/internal/identity"
 )
 
 const (
@@ -99,6 +101,15 @@ func friendlyText(err error, fallback string) string {
 	if err == nil {
 		return ""
 	}
+
+	var rejected *identity.RejectedError
+	if errors.As(err, &rejected) {
+		if text := rejected.Reason.HumanText(); text != "" {
+			return text
+		}
+		return fallback
+	}
+
 	message := err.Error()
 	for _, rule := range userMessages {
 		if strings.Contains(message, rule.match) {

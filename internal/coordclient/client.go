@@ -3,30 +3,143 @@ package coordclient
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/identity"
 )
 
+type Endpoint struct {
+	Name       string
+	BaseURL    string
+	ServerName string
+}
+
+type Signer interface {
+	SignRequest(request *http.Request, body []byte, now time.Time) error
+}
+
+type Options struct {
+	BaseURL   string
+	Auth      string
+	Endpoints []Endpoint
+	TLS       *tls.Config
+	Signer    Signer
+	Now       func() time.Time
+	Timeout   time.Duration
+}
+
 type Client struct {
-	baseURL string
-	auth    string
-	http    *http.Client
+	auth      string
+	signer    Signer
+	now       func() time.Time
+	endpoints []Endpoint
+	clients   []*http.Client
+	cookies   map[string]string
+
+	mu      sync.RWMutex
+	current int
 }
 
 func New(baseURL, auth string) *Client {
-	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		auth:    auth,
-		http:    &http.Client{Timeout: 15 * time.Second},
+	client, err := NewClient(Options{BaseURL: baseURL, Auth: auth})
+	if err != nil {
+		return &Client{auth: auth, now: time.Now, cookies: make(map[string]string)}
 	}
+	return client
+}
+
+func NewClient(options Options) (*Client, error) {
+	timeout := options.Timeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+
+	endpoints := options.Endpoints
+	if len(endpoints) == 0 {
+		if strings.TrimSpace(options.BaseURL) == "" {
+			return nil, errors.New("coordclient: no endpoints configured")
+		}
+		endpoints = []Endpoint{{Name: "default", BaseURL: options.BaseURL}}
+	}
+
+	clients := make([]*http.Client, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if strings.TrimSpace(endpoint.BaseURL) == "" {
+			return nil, fmt.Errorf("coordclient: endpoint %q has no URL", endpoint.Name)
+		}
+		transport := &http.Transport{
+			ForceAttemptHTTP2: true,
+			Proxy:             http.ProxyFromEnvironment,
+		}
+		if options.TLS != nil {
+			config := options.TLS.Clone()
+			if endpoint.ServerName != "" {
+				config.ServerName = endpoint.ServerName
+			}
+			transport.TLSClientConfig = config
+		}
+		clients = append(clients, &http.Client{Timeout: timeout, Transport: transport})
+	}
+
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Client{
+		auth:      options.Auth,
+		signer:    options.Signer,
+		now:       now,
+		endpoints: endpoints,
+		clients:   clients,
+		cookies:   make(map[string]string),
+	}, nil
+}
+
+func (c *Client) Endpoints() []Endpoint {
+	return append([]Endpoint(nil), c.endpoints...)
+}
+
+func (c *Client) ActiveEndpoint() Endpoint {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.current < 0 || c.current >= len(c.endpoints) {
+		return Endpoint{}
+	}
+	return c.endpoints[c.current]
+}
+
+func (c *Client) SetAuth(auth string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.auth = auth
+}
+
+func (c *Client) SetDeviceSecret(secret string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cookies["device_secret"] = secret
+}
+
+func (c *Client) deviceSecret() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cookies["device_secret"]
+}
+
+func (c *Client) authHeader() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.auth
 }
 
 type EnrollResult struct {
@@ -184,6 +297,37 @@ func (c *Client) RevokeDevice(id string) (*coordinator.Device, error) {
 	return &out.Device, nil
 }
 
+type ClaimChallenge struct {
+	ClaimID   string `json:"claim_id"`
+	Challenge string `json:"challenge"`
+	ServerKey string `json:"server_key"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+func (c *Client) ClaimChallenge(wgPublicKey string) (*ClaimChallenge, error) {
+	var out ClaimChallenge
+	if err := c.do(http.MethodPost, "/v1/claim/challenge", map[string]string{"public_key": wgPublicKey}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) Claim(claimID, proof, signPublicKey, signature string) (*coordinator.Device, error) {
+	body := map[string]string{
+		"claim_id":        claimID,
+		"proof":           proof,
+		"sign_public_key": signPublicKey,
+		"signature":       signature,
+	}
+	var out struct {
+		Device coordinator.Device `json:"device"`
+	}
+	if err := c.do(http.MethodPost, "/v1/claim", body, &out); err != nil {
+		return nil, err
+	}
+	return &out.Device, nil
+}
+
 func (c *Client) CreateToken(label, meshIP string, ttl time.Duration) (*coordinator.Token, error) {
 	body := map[string]any{
 		"label":       label,
@@ -228,50 +372,100 @@ func (c *Client) Signals(_ context.Context, peer string) ([]coordinator.Signal, 
 }
 
 func (c *Client) do(method, path string, body, out any) error {
-	var reader io.Reader
+	var payload []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		reader = bytes.NewReader(data)
+		payload = data
+	}
+	return c.doWith(method, path, payload, out)
+}
+
+func (c *Client) doWith(method, path string, payload []byte, out any) error {
+	if len(c.endpoints) == 0 {
+		return errors.New("coordinator URL is required (--server or ALCEAMESH_COORDINATOR)")
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, reader)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.auth != "" {
-		req.Header.Set("Authorization", "Bearer "+c.auth)
-	}
+	c.mu.RLock()
+	start := c.current
+	c.mu.RUnlock()
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for offset := 0; offset < len(c.endpoints); offset++ {
+		index := (start + offset) % len(c.endpoints)
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode >= 400 {
-		var payload struct {
-			Error string `json:"error"`
+		response, data, err := c.attempt(index, method, path, payload)
+		if err != nil {
+			lastErr = err
+			continue
 		}
-		if json.Unmarshal(data, &payload) == nil && payload.Error != "" {
-			return fmt.Errorf("%s", payload.Error)
+
+		c.mu.Lock()
+		c.current = index
+		c.mu.Unlock()
+
+		if response.StatusCode >= 400 {
+			if rejection := identity.ParseRejection(response.StatusCode, data); rejection != nil {
+				return rejection
+			}
+			var message struct {
+				Error string `json:"error"`
+			}
+			if json.Unmarshal(data, &message) == nil && message.Error != "" {
+				return fmt.Errorf("%s", message.Error)
+			}
+			return fmt.Errorf("coordinator returned %s", response.Status)
 		}
-		return fmt.Errorf("coordinator returned %s", resp.Status)
-	}
-	if out == nil {
+		if out == nil {
+			return nil
+		}
+		if err := json.Unmarshal(data, out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
 		return nil
 	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+
+	if lastErr == nil {
+		lastErr = errors.New("coordinator is unreachable")
 	}
-	return nil
+	return lastErr
+}
+
+func (c *Client) attempt(index int, method, path string, payload []byte) (*http.Response, []byte, error) {
+	endpoint := c.endpoints[index]
+	base := strings.TrimRight(endpoint.BaseURL, "/")
+
+	var reader io.Reader
+	if payload != nil {
+		reader = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequest(method, base+path, reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if auth := c.authHeader(); auth != "" {
+		request.Header.Set("Authorization", "Bearer "+auth)
+	}
+	if c.signer != nil {
+		if err := c.signer.SignRequest(request, payload, c.now()); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	response, err := c.clients[index].Do(request)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", endpoint.Name, err)
+	}
+	defer response.Body.Close()
+
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: read response: %w", endpoint.Name, err)
+	}
+	return response, data, nil
 }

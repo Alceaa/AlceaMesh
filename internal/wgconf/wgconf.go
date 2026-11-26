@@ -312,18 +312,26 @@ func (c *Config) ToUAPI() (string, error) {
 }
 
 func (c *Config) PublicKey() (string, error) {
-	raw, err := base64.StdEncoding.DecodeString(c.Interface.PrivateKey)
+	private, err := c.PrivateKey()
 	if err != nil {
-		return "", fmt.Errorf("invalid base64 private key: %w", err)
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(private.PublicKey().Bytes()), nil
+}
+
+func (c *Config) PrivateKey() (*ecdh.PrivateKey, error) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(c.Interface.PrivateKey))
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64 private key: %w", err)
 	}
 	if len(raw) != 32 {
-		return "", fmt.Errorf("private key must be 32 bytes, got %d", len(raw))
+		return nil, fmt.Errorf("private key must be 32 bytes, got %d", len(raw))
 	}
 	private, err := ecdh.X25519().NewPrivateKey(raw)
 	if err != nil {
-		return "", fmt.Errorf("invalid private key: %w", err)
+		return nil, fmt.Errorf("invalid private key: %w", err)
 	}
-	return base64.StdEncoding.EncodeToString(private.PublicKey().Bytes()), nil
+	return private, nil
 }
 
 func (c *Config) PrimaryAddress() string {

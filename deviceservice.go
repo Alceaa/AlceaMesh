@@ -58,20 +58,37 @@ func (s *DeviceService) Network() (NetworkView, error) {
 		view.Message = "Импортируйте конфигурацию, чтобы войти в сеть."
 		return view, nil
 	}
+	if !vpnRunning(stored) {
+		view.Message = "Включите VPN, чтобы увидеть устройства сети."
+		return view, nil
+	}
 
-	client := coordclient.New(view.Coordinator, "")
+	client, err := newCoordinatorClient(deviceCredentials(stored))
+	if err != nil {
+		view.Message = friendlyText(err, fallbackNetwork)
+		return view, nil
+	}
+
 	self, err := client.Announce(coordclient.PresenceRequest{
 		PublicKey: view.Identity.PublicKey,
 		Name:      view.Identity.Name,
 		MeshIP:    view.Identity.MeshIP,
 		Platform:  view.Identity.Platform,
-		Available: stored.AcceptFiles && vpnRunning(stored),
+		Available: stored.AcceptFiles,
 	})
 	if err != nil {
 		view.Message = friendlyText(err, fallbackNetwork)
 		return view, nil
 	}
 	view.Reachable = true
+	view.Coordinator = client.ActiveEndpoint().BaseURL
+
+	self, stored = s.syncIdentity(client, stored, self)
+	if self.Revoked() {
+		view.Message = "Это устройство отозвано владельцем сети. Обратитесь к нему за новой регистрацией."
+		view.Devices = nil
+		return view, nil
+	}
 
 	peers, err := client.Peers(false)
 	if err != nil {
@@ -88,6 +105,35 @@ func (s *DeviceService) Network() (NetworkView, error) {
 	sortDevices(view.Devices)
 	rememberDevices(view.Devices)
 	return view, nil
+}
+
+func (s *DeviceService) syncIdentity(client *coordclient.Client, stored *settings.Settings, self *coordinator.Device) (*coordinator.Device, *settings.Settings) {
+	if self == nil {
+		return self, stored
+	}
+	changed := false
+
+	if stored.DeviceID != self.ID {
+		stored.DeviceID = self.ID
+		changed = true
+	}
+	if changed {
+		_ = stored.Save()
+	}
+
+	if self.SignPublicKey != "" || self.Revoked() {
+		return self, stored
+	}
+
+	key, err := deviceKey()
+	if err != nil {
+		return self, stored
+	}
+	attached, err := attachDevice(client, stored, key)
+	if err != nil {
+		return self, stored
+	}
+	return attached, stored
 }
 
 func visibleDevice(peer coordinator.DeviceView, self bool) bool {

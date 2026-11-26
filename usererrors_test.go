@@ -3,7 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+
+	"alceacore.ru/alceamesh/internal/identity"
 )
 
 func TestFriendlyText(t *testing.T) {
@@ -62,5 +65,26 @@ func TestHasCyrillic(t *testing.T) {
 	}
 	if hasCyrillic("") {
 		t.Fatal("hasCyrillic() = true for empty text")
+	}
+}
+
+func TestRejectionTexts(t *testing.T) {
+	rejected := &identity.RejectedError{
+		Status: 401,
+		Reason: identity.ReasonRevoked,
+		Detail: "device was revoked",
+	}
+	if got := friendlyText(rejected, fallbackNetwork); !strings.Contains(got, "отозвано") {
+		t.Errorf("friendlyText = %q, want the revoked text", got)
+	}
+
+	unknown := &identity.RejectedError{Status: 401, Reason: identity.Reason("unknown_reason"), Detail: "hmm"}
+	if got := friendlyText(unknown, fallbackNetwork); got != fallbackNetwork {
+		t.Errorf("an unknown reason must fall back, got %q", got)
+	}
+
+	wrapped := fmt.Errorf("request failed: %w", rejected)
+	if got := friendlyText(wrapped, fallbackNetwork); !strings.Contains(got, "отозвано") {
+		t.Errorf("a wrapped rejection must be recognised, got %q", got)
 	}
 }
