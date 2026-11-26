@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"alceacore.ru/alceamesh/internal/audit"
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/identity"
 )
@@ -144,6 +145,7 @@ func (s *Server) handleClaimChallenge(w http.ResponseWriter, r *http.Request) {
 		challenge: challenge,
 		expiresAt: expiresAt,
 	})
+	s.auditRequest(r, audit.Entry{Event: "claim", Result: "challenge", DeviceID: device.ID, DeviceName: device.Name})
 
 	writeJSON(w, http.StatusOK, claimChallengeResponse{
 		ClaimID:   claimID,
@@ -174,10 +176,12 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 
 	claim, ok := s.claims().take(req.ClaimID, s.now())
 	if !ok {
+		s.auditRequest(r, audit.Entry{Event: "claim", Result: "fail", Reason: string(ReasonUnknownClaim)})
 		writeAuthError(w, newAuthError(ReasonUnknownClaim, "this claim is unknown or already used"))
 		return
 	}
 	if s.now().After(claim.expiresAt) {
+		s.auditRequest(r, audit.Entry{Event: "claim", Result: "fail", Reason: string(ReasonClaimExpired), DeviceID: claim.deviceID})
 		writeAuthError(w, newAuthError(ReasonClaimExpired, "ask for a new challenge"))
 		return
 	}
@@ -220,11 +224,14 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, coordinator.ErrDeviceRevoked):
+			s.auditRequest(r, audit.Entry{Event: "claim", Result: "fail", Reason: string(ReasonRevoked), DeviceID: device.ID})
 			writeAuthError(w, newAuthError(ReasonRevoked, "%v", err))
 		default:
+			s.auditRequest(r, audit.Entry{Event: "claim", Result: "fail", Reason: string(ReasonNotAttachable), DeviceID: device.ID})
 			writeAuthError(w, newAuthError(ReasonNotAttachable, "%v", err))
 		}
 		return
 	}
+	s.auditRequest(r, audit.Entry{Event: "claim", Result: "ok", DeviceID: attached.ID, DeviceName: attached.Name})
 	writeJSON(w, http.StatusOK, map[string]any{"device": attached})
 }

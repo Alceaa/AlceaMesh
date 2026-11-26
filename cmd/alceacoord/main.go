@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"alceacore.ru/alceamesh/internal/audit"
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/coordinator/api"
 	"alceacore.ru/alceamesh/internal/coordinator/sqlitestore"
@@ -74,6 +75,9 @@ func cmdRun(args []string) error {
 	tlsCert := fs.String("tls-cert", "", "TLS certificate (enables HTTPS, together with -tls-key)")
 	tlsKey := fs.String("tls-key", "", "TLS private key")
 	publicListen := fs.String("public-listen", "", "additional address for the public listener (registration, version, ping only)")
+	enrollRate := fs.Int("enroll-rate", 10, "registration attempts per minute per address (0 = unlimited)")
+	enrollBurst := fs.Int("enroll-burst", 5, "how many registration attempts may happen back to back")
+	auditLog := fs.String("audit-log", "", "file for security audit events (default: the service log)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -98,6 +102,16 @@ func cmdRun(args []string) error {
 		Version:          buildversion.String(),
 		RequireSignature: !*legacyMode,
 		Nonces:           identity.NewNonceCache(identity.DefaultNonceTTL, identity.DefaultNonceLimit),
+		Limiter:          api.NewLimiter(*enrollRate, *enrollBurst, 0),
+		Audit:            audit.NewStdLogger(),
+	}
+	if *auditLog != "" {
+		logger, closer, err := audit.NewFile(*auditLog)
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		server.Audit = logger
 	}
 	httpServer := &http.Server{
 		Addr:              *listen,

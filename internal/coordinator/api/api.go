@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"alceacore.ru/alceamesh/internal/audit"
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/identity"
 )
@@ -23,17 +24,27 @@ type Server struct {
 	RequireSignature bool
 	Nonces           *identity.NonceCache
 	Now              func() time.Time
+	Limiter          *Limiter
+	Audit            *audit.Logger
 
 	claimStore *claimStore
+}
+
+func (s *Server) auditRequest(r *http.Request, entry audit.Entry) {
+	if s == nil || s.Audit == nil {
+		return
+	}
+	entry.Remote = remoteOf(r)
+	s.Audit.Log(entry)
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/ping", s.handlePing)
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
-	mux.HandleFunc("POST /v1/enroll", s.handleEnroll)
-	mux.HandleFunc("POST /v1/claim/challenge", s.handleClaimChallenge)
-	mux.HandleFunc("POST /v1/claim", s.handleClaim)
+	mux.HandleFunc("POST /v1/enroll", s.withRateLimit(s.handleEnroll))
+	mux.HandleFunc("POST /v1/claim/challenge", s.withRateLimit(s.handleClaimChallenge))
+	mux.HandleFunc("POST /v1/claim", s.withRateLimit(s.handleClaim))
 	mux.HandleFunc("POST /v1/invites", s.handleCreateInvite)
 	mux.HandleFunc("GET /v1/invites", s.handleListInvites)
 	mux.HandleFunc("POST /v1/invites/{id}/revoke", s.handleRevokeInvite)
@@ -54,8 +65,9 @@ func (s *Server) PublicHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/ping", s.handlePing)
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
-	mux.HandleFunc("POST /v1/enroll", s.handleEnroll)
+	mux.HandleFunc("POST /v1/enroll", s.withRateLimit(s.handleEnroll))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		s.auditRequest(r, audit.Entry{Event: "public", Result: "deny", Reason: "not_public", Detail: r.URL.Path})
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error":  "этот адрес доступен только из сети Alcea",
 			"reason": "not_public",

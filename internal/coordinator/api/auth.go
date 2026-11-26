@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"alceacore.ru/alceamesh/internal/audit"
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/identity"
 )
@@ -111,11 +112,13 @@ func (s *Server) withSignature(next http.HandlerFunc) http.HandlerFunc {
 		case identity.HeadersPresent(r.Header):
 			device, authErr := s.verifySigned(r, body)
 			if authErr != nil {
+				s.auditRequest(r, audit.Entry{Event: "auth", Result: "deny", Reason: string(authErr.Reason), Detail: r.URL.Path})
 				writeAuthError(w, authErr)
 				return
 			}
 			next(w, withDevice(r, device))
 		case s.RequireSignature:
+			s.auditRequest(r, audit.Entry{Event: "auth", Result: "deny", Reason: string(ReasonSignatureRequired), Detail: r.URL.Path})
 			writeAuthError(w, newAuthError(ReasonSignatureRequired, "this AlceaMesh network requires signed requests"))
 		default:
 			next(w, r)

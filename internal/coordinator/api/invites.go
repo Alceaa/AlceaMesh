@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"alceacore.ru/alceamesh/internal/audit"
 	"alceacore.ru/alceamesh/internal/coordinator"
 	"alceacore.ru/alceamesh/internal/identity"
 )
@@ -54,6 +55,7 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	s.auditRequest(r, audit.Entry{Event: "invite", Result: "created", InviteID: invitation.ID, Detail: invitation.Label})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"invitation": invitation,
 		"code":       code,
@@ -81,6 +83,7 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, newAuthError(inviteReason(err), "%v", err))
 		return
 	}
+	s.auditRequest(r, audit.Entry{Event: "invite", Result: "revoked", InviteID: invitation.ID})
 	writeJSON(w, http.StatusOK, map[string]any{"invitation": invitation})
 }
 
@@ -93,6 +96,7 @@ func (s *Server) handleRevokeDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	s.auditRequest(r, audit.Entry{Event: "device", Result: "revoked", DeviceID: device.ID, DeviceName: device.Name})
 	writeJSON(w, http.StatusOK, map[string]any{"device": device})
 }
 
@@ -108,6 +112,7 @@ type inviteEnrollRequest struct {
 func (s *Server) handleInviteEnroll(w http.ResponseWriter, r *http.Request, req inviteEnrollRequest) {
 	payload := identity.CanonicalEnroll(req.Invite, req.Name, req.Platform, req.PublicKey, req.SignPublicKey)
 	if err := identity.VerifySignature(req.SignPublicKey, payload, req.Signature); err != nil {
+		s.auditRequest(r, audit.Entry{Event: "enroll", Result: "fail", Reason: string(ReasonBadSignKey), DeviceName: req.Name})
 		writeAuthError(w, newAuthError(ReasonBadSignKey, "%v", err))
 		return
 	}
@@ -122,11 +127,21 @@ func (s *Server) handleInviteEnroll(w http.ResponseWriter, r *http.Request, req 
 	if err != nil {
 		if errors.Is(err, coordinator.ErrInviteUnknown) || errors.Is(err, coordinator.ErrInviteExpired) ||
 			errors.Is(err, coordinator.ErrInviteRevoked) || errors.Is(err, coordinator.ErrInviteExhausted) {
-			writeAuthError(w, newAuthError(inviteReason(err), "%v", err))
+			reason := inviteReason(err)
+			s.auditRequest(r, audit.Entry{Event: "enroll", Result: "fail", Reason: string(reason), DeviceName: req.Name})
+			writeAuthError(w, newAuthError(reason, "%v", err))
 			return
 		}
+		s.auditRequest(r, audit.Entry{Event: "enroll", Result: "fail", Reason: "rejected", DeviceName: req.Name})
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	s.auditRequest(r, audit.Entry{
+		Event:      "enroll",
+		Result:     "ok",
+		DeviceID:   device.ID,
+		DeviceName: device.Name,
+		Detail:     "invite",
+	})
 	writeJSON(w, http.StatusCreated, enrollResponse{Device: *device, Secret: device.Secret})
 }
