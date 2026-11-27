@@ -168,6 +168,7 @@ func TestWireGuardKeysFromConfig(t *testing.T) {
 
 func TestCoordinatorEndpointsPreferTheMesh(t *testing.T) {
 	t.Setenv("ALCEAMESH_COORDINATOR", "")
+	t.Setenv("ALCEAMESH_MESH_ADDRESS", "")
 	endpoints := coordinatorEndpoints()
 	if len(endpoints) != 2 {
 		t.Fatalf("endpoints = %+v, want the mesh one first and the public one second", endpoints)
@@ -179,6 +180,12 @@ func TestCoordinatorEndpointsPreferTheMesh(t *testing.T) {
 		if endpoint.ServerName == "" {
 			t.Errorf("endpoint %q must pin the server name", endpoint.Name)
 		}
+	}
+
+	t.Setenv("ALCEAMESH_MESH_ADDRESS", "10.66.66.1:8443")
+	moved := coordinatorEndpoints()
+	if moved[0].BaseURL != "https://10.66.66.1:8443" {
+		t.Errorf("the mesh address must be overridable, got %q", moved[0].BaseURL)
 	}
 
 	t.Setenv("ALCEAMESH_COORDINATOR", "http://10.66.66.1:7788")

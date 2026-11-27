@@ -25,12 +25,19 @@ func deviceKey() (*identity.Key, error) {
 	return identity.LoadOrCreate(deviceIdentityDir())
 }
 
+func meshAddress() string {
+	if custom := strings.TrimSpace(os.Getenv("ALCEAMESH_MESH_ADDRESS")); custom != "" {
+		return custom
+	}
+	return trust.MeshAddress
+}
+
 func coordinatorEndpoints() []coordclient.Endpoint {
 	if custom := strings.TrimSpace(os.Getenv("ALCEAMESH_COORDINATOR")); custom != "" {
 		return []coordclient.Endpoint{{Name: "custom", BaseURL: custom}}
 	}
 	return []coordclient.Endpoint{
-		{Name: "mesh", BaseURL: "https://" + trust.MeshAddress, ServerName: trust.ServerName},
+		{Name: "mesh", BaseURL: "https://" + meshAddress(), ServerName: trust.ServerName},
 		{Name: "public", BaseURL: "https://" + trust.ServerName, ServerName: trust.ServerName},
 	}
 }

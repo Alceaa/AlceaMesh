@@ -4,9 +4,47 @@ import (
 	"crypto/tls"
 	"strings"
 	"testing"
+	"time"
 
 	"alceacore.ru/alceamesh/internal/pki"
 )
+
+func TestPinnedRootVerifies(t *testing.T) {
+	if !Pinned() {
+		t.Skip("корень ещё не закреплён в этой сборке")
+	}
+	if err := VerifyPin(); err != nil {
+		t.Fatalf("закреплённый отпечаток не сходится с сертификатом: %v", err)
+	}
+
+	config, err := TLSConfig()
+	if err != nil {
+		t.Fatalf("TLSConfig: %v", err)
+	}
+	if config.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %x, want TLS 1.3", config.MinVersion)
+	}
+	if config.ServerName != ServerName {
+		t.Errorf("ServerName = %q, want %q", config.ServerName, ServerName)
+	}
+	if config.RootCAs == nil || len(config.RootCAs.Subjects()) == 0 {
+		t.Error("в пуле должен быть наш корень")
+	}
+	if config.InsecureSkipVerify {
+		t.Error("проверка сертификата должна оставаться включённой")
+	}
+
+	cert, err := RootCertificate()
+	if err != nil {
+		t.Fatalf("RootCertificate: %v", err)
+	}
+	if !cert.IsCA {
+		t.Error("закреплённый сертификат должен быть центром сертификации")
+	}
+	if cert.NotAfter.Before(time.Now()) {
+		t.Errorf("корень истёк %s", cert.NotAfter)
+	}
+}
 
 func TestTemplatesAreUnpinned(t *testing.T) {
 	if Pinned() {
