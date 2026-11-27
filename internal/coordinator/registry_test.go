@@ -597,6 +597,31 @@ func TestAttachExistingDevice(t *testing.T) {
 	}
 }
 
+func TestAttachMigratedDevice(t *testing.T) {
+	registry, _ := newTestRegistry(t)
+
+	device, err := registry.Announce(AnnounceRequest{PublicKey: "wg-migrated", Name: "старый ПК"})
+	if err != nil {
+		t.Fatalf("Announce: %v", err)
+	}
+	device.Legacy = false
+	if err := registry.store.PutDevice(*device); err != nil {
+		t.Fatalf("PutDevice: %v", err)
+	}
+
+	key := testSignKey(t)
+	attached, err := registry.AttachDevice(device.ID, key)
+	if err != nil {
+		t.Fatalf("AttachDevice: %v", err)
+	}
+	if attached.SignPublicKey != key {
+		t.Errorf("sign key = %q, want %q", attached.SignPublicKey, key)
+	}
+	if attached.Attachable() {
+		t.Error("attaching must be one-time")
+	}
+}
+
 func TestRevokedDeviceIsRejected(t *testing.T) {
 	registry, _ := newTestRegistry(t)
 

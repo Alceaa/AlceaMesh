@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -57,6 +60,17 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, errors.New("sqlitestore: a database path is required")
+	}
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return nil, fmt.Errorf("sqlitestore: cannot create the database folder %s: %w", dir, err)
+		}
+	}
+
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -65,7 +79,7 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, fmt.Errorf("apply schema: %w (check that the folder %s exists and is writable by the service user)", err, dir)
 	}
 	_, _ = db.Exec(`ALTER TABLE devices ADD COLUMN available INTEGER NOT NULL DEFAULT 0`)
 	for _, statement := range []string{
@@ -75,6 +89,7 @@ func Open(path string) (*Store, error) {
 	} {
 		_, _ = db.Exec(statement)
 	}
+	_, _ = db.Exec(`UPDATE devices SET legacy = 1 WHERE legacy = 0 AND sign_public_key = ''`)
 	return &Store{db: db}, nil
 }
 

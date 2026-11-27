@@ -321,8 +321,14 @@ func TestOpenMigratesOldDatabase(t *testing.T) {
 	if device.Name != "старый ПК" || device.PublicKey != "wg-old" || device.MeshIP != "10.0.0.9" {
 		t.Errorf("migrated device = %+v", device)
 	}
-	if device.SignPublicKey != "" || device.Revoked() || device.Legacy {
+	if device.SignPublicKey != "" || device.Revoked() {
 		t.Errorf("the new columns must be empty for old rows: %+v", device)
+	}
+	if !device.Legacy {
+		t.Error("a row without a signing key predates invitations and must be marked as legacy by the migration")
+	}
+	if !device.Attachable() {
+		t.Error("a migrated row without a signing key must be attachable")
 	}
 
 	invitation := coordinator.Invitation{

@@ -32,7 +32,7 @@ func (d Device) Revoked() bool {
 }
 
 func (d Device) Attachable() bool {
-	return d.Legacy && !d.Revoked() && strings.TrimSpace(d.SignPublicKey) == "" && strings.TrimSpace(d.PublicKey) != ""
+	return !d.Revoked() && strings.TrimSpace(d.SignPublicKey) == "" && strings.TrimSpace(d.PublicKey) != ""
 }
 
 type AnnounceRequest struct {
