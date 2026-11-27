@@ -1,0 +1,33 @@
+[Unit]
+Description=AlceaMesh coordinator
+Documentation=https://github.com/Alceaa/AlceaMesh
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target wg-quick@wg0.service
+
+[Service]
+Type=simple
+User=alceacoord
+Group=alceacoord
+EnvironmentFile=/etc/alceacoord.env
+ExecStart=/usr/local/bin/alceacoord run \
+    --listen 10.66.66.1:7443 \
+    --tls-cert /etc/alceamesh/ca/server.crt \
+    --tls-key /etc/alceamesh/ca/server.key \
+    --public-listen 127.0.0.1:8443 \
+    --public-http \
+    --db /var/lib/alceacoord/alceacoord.db \
+    --pool 10.66.66.0/24 \
+    --presence-ttl 90s \
+    --enroll-rate 10 \
+    --enroll-burst 5 \
+    --audit-log /var/log/alceacoord/audit.log
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/alceacoord /var/log/alceacoord
+
+[Install]
+WantedBy=multi-user.target

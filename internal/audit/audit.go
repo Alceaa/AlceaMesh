@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -33,6 +34,11 @@ func New(out io.Writer) *Logger {
 }
 
 func NewFile(path string) (*Logger, io.Closer, error) {
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return nil, nil, fmt.Errorf("audit: cannot create the folder %s: %w", dir, err)
+		}
+	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("audit: open %s: %w", path, err)

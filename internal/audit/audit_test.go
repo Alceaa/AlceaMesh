@@ -77,8 +77,26 @@ func TestFileLoggerAppendsAndProtectsTheFile(t *testing.T) {
 }
 
 func TestFileLoggerReportsBadPath(t *testing.T) {
-	if _, _, err := NewFile(filepath.Join(t.TempDir(), "нет", "такой", "папки", "audit.log")); err == nil {
-		t.Error("a missing folder must be reported")
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, err := NewFile(filepath.Join(blocker, "audit.log")); err == nil {
+		t.Error("a file in place of the folder must be reported")
+	}
+}
+
+func TestFileLoggerCreatesTheFolder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", "nested", "audit.log")
+	logger, closer, err := NewFile(path)
+	if err != nil {
+		t.Fatalf("NewFile must create the folder: %v", err)
+	}
+	defer closer.Close()
+	logger.Log(Entry{Event: "test"})
+
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the log must exist: %v", err)
 	}
 }
 

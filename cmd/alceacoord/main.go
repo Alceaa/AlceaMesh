@@ -75,6 +75,7 @@ func cmdRun(args []string) error {
 	tlsCert := fs.String("tls-cert", "", "TLS certificate (enables HTTPS, together with -tls-key)")
 	tlsKey := fs.String("tls-key", "", "TLS private key")
 	publicListen := fs.String("public-listen", "", "additional address for the public listener (registration, version, ping only)")
+	publicHTTP := fs.Bool("public-http", false, "serve the public listener over plain HTTP (use when a TLS proxy such as Caddy is in front)")
 	enrollRate := fs.Int("enroll-rate", 10, "registration attempts per minute per address (0 = unlimited)")
 	enrollBurst := fs.Int("enroll-burst", 5, "how many registration attempts may happen back to back")
 	auditLog := fs.String("audit-log", "", "file for security audit events (default: the service log)")
@@ -150,7 +151,7 @@ func cmdRun(args []string) error {
 		}
 		go func() {
 			var err error
-			if *tlsCert != "" {
+			if *tlsCert != "" && !*publicHTTP {
 				err = publicServer.ListenAndServeTLS(*tlsCert, *tlsKey)
 			} else {
 				err = publicServer.ListenAndServe()
@@ -159,7 +160,11 @@ func cmdRun(args []string) error {
 				log.Printf("public listener stopped: %v", err)
 			}
 		}()
-		log.Printf("alceacoord public listener on %s (регистрация, версия и ping)", *publicListen)
+		scheme := "https"
+		if *publicHTTP {
+			scheme = "http (за TLS-прокси)"
+		}
+		log.Printf("alceacoord public listener on %s — %s, отдаёт регистрацию, версию и ping", *publicListen, scheme)
 	}
 
 	scheme := "http"
