@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
-  "url": "https://github.com/Alceaa/AlceaMesh/releases/download/v1.0.0/AlceaMesh-Setup-1.0.0.exe",
-  "sha256": "CF1903624A19CBA74FDC2B430E11AE892880A10DD3985DE1B8AA071C0D23E704",
-  "size": 32756224,
-  "notes": "Первый публичный релиз: VPN-сеть, передача файлов и папок, автоматические обновления"
+  "version": "1.1.0",
+  "url": "https://github.com/Alceaa/AlceaMesh/releases/download/v1.1.0/AlceaMesh-Setup-1.1.0.exe",
+  "sha256": "D22983CCFB139E13961EEDE84E233993BC1A59257F4BFC046B2618181E3AEAAE",
+  "size": 32898048,
+  "notes": "Доверие и подписи: свой корень сертификатов и защищённый вход координатора, ключ подписи у каждого устройства, регистрация по приглашению, привязка существующих устройств без перевыпуска конфигов"
 }
